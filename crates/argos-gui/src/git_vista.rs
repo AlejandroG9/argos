@@ -89,6 +89,28 @@ pub fn tender_carriles(commits: &[Commit]) -> GrafoGit {
     grafo
 }
 
+/// Nombres de rama presentables: `main` y `origin/main` son la misma rama
+/// para quien mira, así que se colapsan en una etiqueta. `HEAD` y las
+/// etiquetas de versión no son ramas.
+pub fn nombres_de_rama(refs: &[String]) -> Vec<String> {
+    let mut vistos = Vec::new();
+
+    for r in refs {
+        if r.starts_with("tag: ") {
+            continue;
+        }
+        let nombre = r.strip_prefix("origin/").unwrap_or(r).trim();
+        if nombre.is_empty() || nombre == "HEAD" {
+            continue;
+        }
+        if !vistos.iter().any(|v| v == nombre) {
+            vistos.push(nombre.to_string());
+        }
+    }
+
+    vistos
+}
+
 /// El carril libre más a la izquierda, creando uno si no hay.
 fn libre(esperando: &mut Vec<Option<String>>) -> usize {
     match esperando.iter().position(Option::is_none) {
@@ -188,12 +210,11 @@ pub fn pintar_git(
 
         let mut x = origen.x + ancho_carriles;
 
-        for r in n.refs.iter().filter(|r| !r.starts_with("tag: ")) {
-            let texto = r.strip_prefix("origin/").unwrap_or(r);
-            let estado = estado_ramas.get(texto.trim());
+        for texto in nombres_de_rama(&n.refs) {
+            let estado = estado_ramas.get(texto.as_str());
             let etiqueta = match estado {
                 Some((a, b)) if *a > 0 || *b > 0 => format!("{texto}  ↑{a} ↓{b}"),
-                _ => texto.to_string(),
+                _ => texto.clone(),
             };
 
             let galera = pintor.layout_no_wrap(
@@ -346,6 +367,25 @@ mod tests {
         let g = tender_carriles(&[]);
         assert!(g.nodos.is_empty());
         assert_eq!(g.carriles, 0);
+    }
+
+    /// `main`, `origin/main` y `origin/HEAD` son lo mismo para quien mira:
+    /// mostrarlos como tres etiquetas es ruido.
+    #[test]
+    fn las_etiquetas_de_rama_no_se_duplican_por_el_remoto() {
+        let refs = vec![
+            "main".to_string(),
+            "origin/main".to_string(),
+            "origin/HEAD".to_string(),
+        ];
+
+        assert_eq!(nombres_de_rama(&refs), vec!["main"]);
+    }
+
+    #[test]
+    fn una_etiqueta_de_version_no_es_una_rama() {
+        let refs = vec!["tag: v1.0".to_string(), "feat/x".to_string()];
+        assert_eq!(nombres_de_rama(&refs), vec!["feat/x"]);
     }
 
     #[test]
