@@ -162,12 +162,20 @@ pub fn slug_de_proyecto(project: &Path) -> String {
 /// Prefiltro barato: decide si vale la pena mirar dentro de un directorio.
 /// Puede dejar pasar de más —se confirma luego con el `cwd` del archivo—,
 /// pero nunca debe descartar de menos.
+///
+/// Acepta en las dos direcciones, y la segunda no es obvia: el directorio
+/// lleva el slug de donde la sesión **arrancó**, no de donde trabajó. Una
+/// sesión iniciada en `~/Proyectos` que pasó el rato dentro de
+/// `~/Proyectos/argos` vive bajo el slug del padre, así que descartar los
+/// ancestros la perdería entera.
 pub fn slug_en_alcance(nombre_dir: &str, scope: &Scope) -> bool {
     match scope {
         Scope::All => true,
         Scope::Projects(roots) => roots.iter().any(|r| {
             let slug = slug_de_proyecto(r);
-            nombre_dir == slug || nombre_dir.starts_with(&format!("{slug}-"))
+            nombre_dir == slug
+                || nombre_dir.starts_with(&format!("{slug}-"))
+                || slug.starts_with(&format!("{nombre_dir}-"))
         }),
     }
 }
@@ -407,6 +415,27 @@ mod tests {
         );
 
         assert!(!scope.contains(Path::new("/Users/alex/Proyectos/Orion-old")));
+    }
+
+    /// Caso real observado: una sesión arranca en `~/Proyectos` y trabaja
+    /// dentro de `~/Proyectos/argos`. El directorio lleva el slug del
+    /// **origen**, no el del trabajo, así que filtrar solo por descendientes
+    /// la tira entera — un falso negativo.
+    #[test]
+    fn un_directorio_ancestro_puede_contener_sesiones_del_proyecto() {
+        let scope = Scope::projects(vec![PathBuf::from("/Users/alex/Proyectos/argos")]);
+
+        assert!(
+            slug_en_alcance("-Users-alex-Proyectos", &scope),
+            "una sesión iniciada en el padre puede haber trabajado dentro"
+        );
+        assert!(slug_en_alcance("-Users-alex", &scope), "y en el abuelo");
+    }
+
+    #[test]
+    fn un_hermano_sigue_descartandose_aunque_aceptemos_ancestros() {
+        let scope = Scope::projects(vec![PathBuf::from("/Users/alex/Proyectos/argos")]);
+        assert!(!slug_en_alcance("-Users-alex-Proyectos-Orion", &scope));
     }
 
     #[test]
