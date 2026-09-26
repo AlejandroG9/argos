@@ -1,5 +1,6 @@
 pub mod claude;
 pub mod codex;
+pub mod gemini;
 pub mod process;
 use crate::error::ProbeError;
 use crate::model::ClientKind;
