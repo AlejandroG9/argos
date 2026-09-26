@@ -1,3 +1,5 @@
+pub mod antigravity;
+
 use crate::error::ProbeError;
 use crate::model::ClientKind;
 use crate::observation::{Capabilities, SessionObservation};
