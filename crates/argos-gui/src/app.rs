@@ -1,3 +1,4 @@
+use crate::git_vista::{pintar_git, tender_carriles};
 use crate::jump::jump_to;
 use crate::nodos::{construir_grafo, pintar_grafo};
 use crate::projects::{nombre_de_proyecto, summarize_projects};
@@ -37,6 +38,13 @@ impl Filter {
     }
 }
 
+#[derive(Default, PartialEq, Clone, Copy)]
+pub enum Vista {
+    #[default]
+    Git,
+    Agentes,
+}
+
 #[derive(PartialEq, Clone, Copy)]
 pub enum Pantalla {
     Selector,
@@ -52,6 +60,7 @@ pub struct ArgosApp {
     pub selected: Option<String>,
     pub filter: Filter,
     pub ventana: Ventana,
+    pub vista: Vista,
     zoom: f32,
     /// `None` = lista de proyectos vigilados. `Some` = dentro de ese proyecto.
     pub abierto: Option<Option<PathBuf>>,
@@ -101,6 +110,7 @@ impl ArgosApp {
             selected: None,
             filter: Filter::default(),
             ventana: Ventana::default(),
+            vista: Vista::default(),
             zoom: 1.0,
             abierto,
         }
@@ -206,6 +216,9 @@ impl eframe::App for ArgosApp {
                 }
 
                 if self.pantalla == Pantalla::Monitoreo {
+                    ui.separator();
+                    ui.selectable_value(&mut self.vista, Vista::Git, "Git");
+                    ui.selectable_value(&mut self.vista, Vista::Agentes, "Agentes");
                     ui.separator();
                     ui.selectable_value(&mut self.filter, Filter::All, "Todas");
                     ui.selectable_value(&mut self.filter, Filter::NeedsAttention, "Me esperan");
@@ -337,8 +350,7 @@ impl ArgosApp {
     }
 
     fn pintar_ramas(&mut self, ctx: &egui::Context, project: Option<PathBuf>, snapshot: &Snapshot) {
-        let filas = self.filas_del_proyecto(&project, snapshot);
-        let grafo = construir_grafo(&filas, self.filter, self.ventana, Utc::now());
+        let now = Utc::now();
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -359,19 +371,47 @@ impl ArgosApp {
             });
             ui.add_space(espacio::S);
 
-            if grafo.nodos.is_empty() {
-                ui.weak("Nada que mostrar con los filtros actuales.");
-                return;
-            }
+            match self.vista {
+                Vista::Git => {
+                    let commits: Vec<_> = snapshot
+                        .commits
+                        .iter()
+                        .filter(|c| self.ventana.acepta(c.fecha, now))
+                        .cloned()
+                        .collect();
 
-            egui::ScrollArea::both()
-                .scroll_source(egui::scroll_area::ScrollSource::ALL)
-                .show(ui, |ui| {
-                    if let Some(id) = pintar_grafo(ui, &grafo, self.selected.as_deref(), self.zoom)
-                    {
-                        self.selected = Some(id);
+                    if commits.is_empty() {
+                        ui.weak("Sin commits en esta ventana temporal.");
+                        return;
                     }
-                });
+
+                    let grafo = tender_carriles(&commits);
+                    egui::ScrollArea::both()
+                        .scroll_source(egui::scroll_area::ScrollSource::ALL)
+                        .show(ui, |ui| {
+                            pintar_git(ui, &grafo, &snapshot.ramas, now, self.zoom);
+                        });
+                }
+                Vista::Agentes => {
+                    let filas = self.filas_del_proyecto(&project, snapshot);
+                    let grafo = construir_grafo(&filas, self.filter, self.ventana, now);
+
+                    if grafo.nodos.is_empty() {
+                        ui.weak("Nada que mostrar con los filtros actuales.");
+                        return;
+                    }
+
+                    egui::ScrollArea::both()
+                        .scroll_source(egui::scroll_area::ScrollSource::ALL)
+                        .show(ui, |ui| {
+                            if let Some(id) =
+                                pintar_grafo(ui, &grafo, self.selected.as_deref(), self.zoom)
+                            {
+                                self.selected = Some(id);
+                            }
+                        });
+                }
+            }
         });
     }
 }

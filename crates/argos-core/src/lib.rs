@@ -2,6 +2,7 @@ pub mod cache;
 pub mod correlator;
 pub mod discovery;
 pub mod error;
+pub mod git_history;
 pub mod model;
 pub mod monitor;
 pub mod observation;

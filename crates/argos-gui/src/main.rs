@@ -1,4 +1,5 @@
 mod app;
+mod git_vista;
 mod jump;
 mod nodos;
 mod projects;

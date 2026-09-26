@@ -28,6 +28,21 @@ pub mod espacio {
 
 pub const REDONDEO: f32 = 8.0;
 
+/// Un color por carril para poder seguir una rama con la vista. Se repiten
+/// al agotarse: más de seis ramas simultáneas ya no se distinguen por color
+/// por muchos que añadas.
+pub fn color_de_carril(carril: usize) -> Color32 {
+    const CARRILES: [Color32; 6] = [
+        Color32::from_rgb(0x5B, 0x8D, 0xEF),
+        Color32::from_rgb(0x3C, 0xAA, 0x6E),
+        Color32::from_rgb(0xE0, 0xA0, 0x30),
+        Color32::from_rgb(0xC0, 0x7C, 0xD8),
+        Color32::from_rgb(0x4C, 0xB5, 0xC0),
+        Color32::from_rgb(0xD8, 0x6E, 0x6E),
+    ];
+    CARRILES[carril % CARRILES.len()]
+}
+
 /// "1 sesiones" delata descuido en una interfaz que presume de cuidada.
 pub fn plural(n: usize, singular: &str, plural: &str) -> String {
     if n == 1 {

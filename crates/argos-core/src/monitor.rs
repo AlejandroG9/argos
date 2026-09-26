@@ -1,5 +1,6 @@
 use crate::correlator::correlate;
 use crate::discovery::{Worktree, discover_worktrees, find_repos};
+use crate::git_history::{Commit, leer_estado_de_ramas, leer_historia};
 use crate::model::{ClientKind, Confidence};
 use crate::observation::ProcessObservation;
 use crate::probes::SessionProbe;
@@ -12,7 +13,12 @@ use crate::scope::Scope;
 use crate::state_engine::{DEFAULT_IDLE_THRESHOLD, infer};
 use crate::store::{SessionRow, Store, StoreError};
 use chrono::{DateTime, Duration, Utc};
+use std::collections::HashMap;
 use std::path::PathBuf;
+
+/// Tope de commits por vista. Orion tiene historia larga y dibujar miles de
+/// nodos no ayuda a nadie; con el filtro temporal encima, casi nunca se roza.
+pub const LIMITE_COMMITS: usize = 300;
 
 #[derive(Debug, Clone)]
 pub struct Snapshot {
@@ -23,6 +29,11 @@ pub struct Snapshot {
     /// sigue funcionando sin base, así que un fallo aquí sería invisible si
     /// no se reportara.
     pub persist_error: Option<String>,
+    /// Historia de git de los proyectos vigilados. Se lee en el hilo de
+    /// sondeo junto con lo demás para que la ventana nunca espere por ella.
+    pub commits: Vec<Commit>,
+    /// Por rama: cuántos commits por delante y por detrás de su remoto.
+    pub ramas: HashMap<String, (u32, u32)>,
     pub taken_at: DateTime<Utc>,
 }
 
@@ -108,6 +119,15 @@ impl Monitor {
         );
 
         let mut snapshot = snapshot;
+
+        // 58 ms medidos para 300 commits: barato, y aquí no bloquea la UI.
+        for repo in scope.roots() {
+            if let Ok(mut c) = leer_historia(repo, LIMITE_COMMITS) {
+                snapshot.commits.append(&mut c);
+            }
+            snapshot.ramas.extend(leer_estado_de_ramas(repo));
+        }
+
         snapshot.persist_error = match &self.store {
             Some(store) => persist(store, &snapshot).err().map(|e| e.to_string()),
             None => Some("no se pudo abrir la base de datos".to_string()),
@@ -203,6 +223,8 @@ pub fn collect(
         rows,
         degraded,
         persist_error: None,
+        commits: Vec::new(),
+        ramas: HashMap::new(),
         taken_at: now,
     }
 }
