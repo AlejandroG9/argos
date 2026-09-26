@@ -6,6 +6,7 @@ use crate::scope::Scope;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::collections::HashSet;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 pub fn parse_rollout(contents: &str, source: &Path) -> Option<SessionObservation> {
@@ -82,6 +83,25 @@ pub fn parse_rollout(contents: &str, source: &Path) -> Option<SessionObservation
     })
 }
 
+/// El `cwd` vive en la primera línea del rollout, así que se puede decidir
+/// el alcance sin leer el resto del archivo.
+pub fn cwd_de_cabecera(primera_linea: &str) -> Option<PathBuf> {
+    let entry: Value = serde_json::from_str(primera_linea).ok()?;
+    if entry.get("type").and_then(Value::as_str) != Some("session_meta") {
+        return None;
+    }
+    entry
+        .get("payload")?
+        .get("cwd")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+}
+
+fn primera_linea(path: &Path) -> Option<String> {
+    let archivo = std::fs::File::open(path).ok()?;
+    BufReader::new(archivo).lines().next()?.ok()
+}
+
 pub struct CodexProbe {
     root: PathBuf,
 }
@@ -146,6 +166,7 @@ impl SessionProbe for CodexProbe {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{BufRead, BufReader};
     use std::path::{Path, PathBuf};
 
     fn leer() -> String {
@@ -181,6 +202,25 @@ mod tests {
         let sin_meta =
             r#"{"timestamp":"2026-08-31T20:23:10.000Z","type":"event_msg","payload":{}}"#;
         assert!(parse_rollout(sin_meta, Path::new("/x/r.jsonl")).is_none());
+    }
+
+    #[test]
+    fn la_cabecera_basta_para_saber_el_cwd() {
+        let primera = r#"{"timestamp":"2026-08-31T20:22:58.163Z","type":"session_meta","payload":{"session_id":"x","cwd":"/p/orion/.worktrees/a"}}"#;
+        assert_eq!(
+            cwd_de_cabecera(primera),
+            Some(PathBuf::from("/p/orion/.worktrees/a"))
+        );
+    }
+
+    #[test]
+    fn una_cabecera_que_no_es_session_meta_no_da_cwd() {
+        assert_eq!(
+            cwd_de_cabecera(r#"{"type":"event_msg","payload":{}}"#),
+            None
+        );
+        assert_eq!(cwd_de_cabecera("basura no json"), None);
+        assert_eq!(cwd_de_cabecera(""), None);
     }
 
     #[test]
