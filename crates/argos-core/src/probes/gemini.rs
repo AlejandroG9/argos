@@ -130,6 +130,10 @@ impl SessionProbe for GeminiProbe {
             let Some(anchor) = read_project_root(&project_dir) else {
                 continue;
             };
+            // Se decide antes de abrir el directorio de chats.
+            if !scope.contains(&anchor) {
+                continue;
+            }
 
             let Ok(chats) = std::fs::read_dir(project_dir.join("chats")) else {
                 continue;
@@ -149,7 +153,6 @@ impl SessionProbe for GeminiProbe {
             }
         }
 
-        sessions.retain(|s| scope.contains(&s.anchor_path));
         Ok(sessions)
     }
 }
@@ -198,6 +201,33 @@ mod tests {
             obs.anchor_path,
             PathBuf::from("/Users/alex/Proyectos/Orion")
         );
+    }
+
+    #[test]
+    fn un_proyecto_fuera_de_alcance_no_abre_sus_chats() {
+        use crate::scope::Scope;
+
+        let dir = tempdir("fuera-de-alcance");
+        let proyecto = dir.join("orion");
+        std::fs::create_dir_all(proyecto.join("chats")).expect("crear dirs");
+        std::fs::write(proyecto.join(".project_root"), "/p/orion\n").expect("escribir");
+        std::fs::write(
+            proyecto.join("chats/session-x.jsonl"),
+            "{\"role\":\"user\"}\n",
+        )
+        .expect("escribir chat");
+
+        let probe = GeminiProbe::new(dir.clone());
+
+        let dentro = probe
+            .observe(&Scope::projects(vec![PathBuf::from("/p/orion")]))
+            .expect("observar");
+        assert_eq!(dentro.len(), 1);
+
+        let fuera = probe
+            .observe(&Scope::projects(vec![PathBuf::from("/p/otro")]))
+            .expect("observar");
+        assert!(fuera.is_empty(), "no debe devolver chats de otro proyecto");
     }
 
     /// El nombre lo da quien llama: los tests corren en paralelo y un

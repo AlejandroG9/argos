@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 /// El historial es un archivo global con una línea por prompt. Cada
 /// `workspace` distinto se trata como una sesión lógica.
-pub fn parse_history(contents: &str, source: &Path) -> Vec<SessionObservation> {
+pub fn parse_history(contents: &str, source: &Path, scope: &Scope) -> Vec<SessionObservation> {
     let mut por_workspace: BTreeMap<String, (i64, i64)> = BTreeMap::new();
 
     for line in contents.lines() {
@@ -23,6 +23,9 @@ pub fn parse_history(contents: &str, source: &Path) -> Vec<SessionObservation> {
         let Some(millis) = entry.get("timestamp").and_then(Value::as_i64) else {
             continue;
         };
+        if !scope.contains(Path::new(workspace)) {
+            continue;
+        }
 
         por_workspace
             .entry(workspace.to_string())
@@ -96,9 +99,7 @@ impl SessionProbe for AntigravityProbe {
             source,
         })?;
 
-        let mut sessions = parse_history(&contents, &self.history);
-        sessions.retain(|s| scope.contains(&s.anchor_path));
-        Ok(sessions)
+        Ok(parse_history(&contents, &self.history, scope))
     }
 }
 
@@ -117,7 +118,7 @@ mod tests {
 
     #[test]
     fn agrupa_el_historial_global_por_workspace() {
-        let sesiones = parse_history(&leer(), Path::new("/x/history.jsonl"));
+        let sesiones = parse_history(&leer(), Path::new("/x/history.jsonl"), &Scope::all());
         assert_eq!(sesiones.len(), 2, "dos workspaces distintos");
 
         let anclas: Vec<PathBuf> = sesiones.iter().map(|s| s.anchor_path.clone()).collect();
@@ -129,7 +130,7 @@ mod tests {
     /// ni en ISO-8601. Tratarlo como segundos daría una fecha en 1970.
     #[test]
     fn interpreta_el_timestamp_como_epoch_en_milisegundos() {
-        let sesiones = parse_history(&leer(), Path::new("/x/history.jsonl"));
+        let sesiones = parse_history(&leer(), Path::new("/x/history.jsonl"), &Scope::all());
         let laboratorio = sesiones
             .iter()
             .find(|s| s.anchor_path.ends_with("Laboratorio"))
@@ -149,7 +150,7 @@ mod tests {
 
     #[test]
     fn antigravity_no_distingue_trabajando_de_esperando() {
-        let sesiones = parse_history(&leer(), Path::new("/x/history.jsonl"));
+        let sesiones = parse_history(&leer(), Path::new("/x/history.jsonl"), &Scope::all());
         assert!(
             sesiones
                 .iter()
@@ -159,8 +160,23 @@ mod tests {
     }
 
     #[test]
+    fn el_historial_global_se_filtra_por_alcance() {
+        let sesiones = parse_history(
+            &leer(),
+            Path::new("/x/history.jsonl"),
+            &Scope::projects(vec![PathBuf::from("/Users/alex/Proyectos/Orion")]),
+        );
+
+        assert_eq!(sesiones.len(), 1, "solo el workspace en alcance");
+        assert_eq!(
+            sesiones[0].anchor_path,
+            PathBuf::from("/Users/alex/Proyectos/Orion")
+        );
+    }
+
+    #[test]
     fn una_entrada_sin_workspace_se_ignora() {
         let contenido = "{\"display\":\"x\",\"timestamp\":1782514696039}\n";
-        assert!(parse_history(contenido, Path::new("/x/history.jsonl")).is_empty());
+        assert!(parse_history(contenido, Path::new("/x/history.jsonl"), &Scope::all()).is_empty());
     }
 }
