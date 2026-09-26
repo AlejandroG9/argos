@@ -1,3 +1,5 @@
+use crate::atribucion::{Indice, shas_mencionados};
+use crate::cache::Huella;
 use crate::correlator::correlate;
 use crate::discovery::{Worktree, discover_worktrees, find_repos};
 use crate::git_history::{Commit, leer_estado_de_ramas, leer_historia};
@@ -34,6 +36,9 @@ pub struct Snapshot {
     pub commits: Vec<Commit>,
     /// Por rama: cuántos commits por delante y por detrás de su remoto.
     pub ramas: HashMap<String, (u32, u32)>,
+    /// Qué conversaciones mencionan cada commit. Mencionar no es haber
+    /// creado: ver `atribucion`.
+    pub menciones: Indice,
     pub taken_at: DateTime<Utc>,
 }
 
@@ -66,6 +71,10 @@ pub struct Monitor {
     probes: Vec<Box<dyn SessionProbe>>,
     process_probe: ProcessProbe,
     store: Option<Store>,
+    /// Menciones ya calculadas por archivo, con su huella. Escanear los
+    /// logs de un proyecto grande cuesta ~1.4 s la primera vez; después,
+    /// solo lo que cambió.
+    menciones: std::sync::Mutex<HashMap<PathBuf, (Huella, std::collections::HashSet<String>)>>,
 }
 
 impl Monitor {
@@ -87,6 +96,7 @@ impl Monitor {
             ],
             process_probe: ProcessProbe::new(),
             store,
+            menciones: std::sync::Mutex::new(HashMap::new()),
             config,
         }
     }
@@ -128,6 +138,8 @@ impl Monitor {
             snapshot.ramas.extend(leer_estado_de_ramas(repo));
         }
 
+        snapshot.menciones = self.indexar_menciones(&snapshot);
+
         snapshot.persist_error = match &self.store {
             Some(store) => persist(store, &snapshot).err().map(|e| e.to_string()),
             None => Some("no se pudo abrir la base de datos".to_string()),
@@ -143,6 +155,64 @@ impl Monitor {
             store.reset()?;
         }
         Ok(self.poll())
+    }
+}
+
+impl Monitor {
+    /// Cruza los commits cargados con lo que mencionan los logs de sesión.
+    /// La longitud del sha la marca git, así que se toma de los propios
+    /// commits en vez de suponerla.
+    fn indexar_menciones(&self, snapshot: &Snapshot) -> Indice {
+        let Some(longitud) = snapshot.commits.first().map(|c| c.sha.len()) else {
+            return Indice::default();
+        };
+
+        let interesan: std::collections::HashSet<&str> =
+            snapshot.commits.iter().map(|c| c.sha.as_str()).collect();
+
+        let mut indice = Indice::default();
+
+        for row in &snapshot.rows {
+            let Some(source) = row.source_path.as_ref() else {
+                continue;
+            };
+            let Some(huella) = Huella::de(source) else {
+                continue;
+            };
+
+            let shas = {
+                let previo = self.menciones.lock().ok().and_then(|c| {
+                    c.get(source)
+                        .filter(|(h, _)| h == &huella)
+                        .map(|(_, s)| s.clone())
+                });
+
+                match previo {
+                    Some(s) => s,
+                    None => {
+                        let Ok(texto) = std::fs::read_to_string(source) else {
+                            continue;
+                        };
+                        let s = shas_mencionados(&texto, longitud);
+                        if let Ok(mut c) = self.menciones.lock() {
+                            c.insert(source.to_path_buf(), (huella, s.clone()));
+                        }
+                        s
+                    }
+                }
+            };
+
+            let relevantes: std::collections::HashSet<String> = shas
+                .into_iter()
+                .filter(|s| interesan.contains(s.as_str()))
+                .collect();
+
+            if !relevantes.is_empty() {
+                indice.registrar(&row.id, relevantes);
+            }
+        }
+
+        indice
     }
 }
 
@@ -201,6 +271,7 @@ pub fn collect(
                 client: c.session.client,
                 anchor_path: c.session.anchor_path.clone(),
                 project: worktree.map(|w| w.repo_root.clone()),
+                source_path: Some(c.session.source_path.clone()),
                 branch: worktree
                     .and_then(|w| w.branch.clone())
                     .or_else(|| c.session.git_branch.clone()),
@@ -225,6 +296,7 @@ pub fn collect(
         persist_error: None,
         commits: Vec::new(),
         ramas: HashMap::new(),
+        menciones: Indice::default(),
         taken_at: now,
     }
 }

@@ -320,6 +320,7 @@ mod tests {
             client: ClientKind::ClaudeCode,
             anchor_path: PathBuf::from("/repo"),
             project: Some(PathBuf::from("/repo")),
+            source_path: None,
             branch: Some(rama.to_string()),
             warp_focus_url: None,
             pid: None,

@@ -17,6 +17,9 @@ pub struct SessionRow {
     /// Raíz del repositorio al que pertenece la sesión. `None` cuando la
     /// sesión corre fuera de cualquier repo conocido.
     pub project: Option<PathBuf>,
+    /// Archivo de sesión del que salió esta fila. Lo usan la atribución de
+    /// commits y, en su día, reanudar la sesión (§14 del spec).
+    pub source_path: Option<PathBuf>,
     pub branch: Option<String>,
     pub warp_focus_url: Option<String>,
     pub pid: Option<u32>,
@@ -36,7 +39,7 @@ pub struct Store {
 /// Se sube al cambiar el esquema. Como la base es un índice derivado de los
 /// logs (spec §7), una versión distinta se resuelve tirando las tablas y
 /// reconstruyendo, no migrando datos.
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 const DROP: &str = "DROP TABLE IF EXISTS samples; DROP TABLE IF EXISTS sessions;";
 
@@ -46,6 +49,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     client          TEXT NOT NULL,
     anchor_path     TEXT NOT NULL,
     project         TEXT,
+    source_path     TEXT,
     branch          TEXT,
     warp_focus_url  TEXT,
     pid             INTEGER,
@@ -113,14 +117,15 @@ impl Store {
         for row in rows {
             self.conn.execute(
                 "INSERT INTO sessions (
-                    id, client, anchor_path, project, branch, warp_focus_url, pid,
-                    started_at, last_activity, state, confidence, parent_id, depth,
-                    input_tokens, output_tokens, cache_read_tokens,
+                    id, client, anchor_path, project, source_path, branch,
+                    warp_focus_url, pid, started_at, last_activity, state, confidence,
+                    parent_id, depth, input_tokens, output_tokens, cache_read_tokens,
                     cache_creation_tokens, thinking_tokens
-                 ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)
+                 ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)
                  ON CONFLICT(id) DO UPDATE SET
                     anchor_path = excluded.anchor_path,
                     project = excluded.project,
+                    source_path = excluded.source_path,
                     branch = excluded.branch,
                     warp_focus_url = excluded.warp_focus_url,
                     pid = excluded.pid,
@@ -137,6 +142,9 @@ impl Store {
                     client_to_str(row.client),
                     row.anchor_path.to_string_lossy(),
                     row.project
+                        .as_ref()
+                        .map(|p| p.to_string_lossy().into_owned()),
+                    row.source_path
                         .as_ref()
                         .map(|p| p.to_string_lossy().into_owned()),
                     row.branch,
@@ -185,9 +193,9 @@ impl Store {
 
     pub fn current(&self) -> Result<Vec<SessionRow>, StoreError> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, client, anchor_path, project, branch, warp_focus_url, pid,
-                    started_at, last_activity, state, confidence, parent_id, depth,
-                    input_tokens, output_tokens, cache_read_tokens,
+            "SELECT id, client, anchor_path, project, source_path, branch,
+                    warp_focus_url, pid, started_at, last_activity, state, confidence,
+                    parent_id, depth, input_tokens, output_tokens, cache_read_tokens,
                     cache_creation_tokens, thinking_tokens
              FROM sessions",
         )?;
@@ -200,13 +208,13 @@ impl Store {
                     .unwrap_or(0)
                     .max(0) as u64
             };
-            let input: Option<i64> = r.get(13)?;
+            let input: Option<i64> = r.get(14)?;
             let metrics = input.map(|input| TokenMetrics {
                 input: input.max(0) as u64,
-                output: leer_conteo(14),
-                cache_read: leer_conteo(15),
-                cache_creation: leer_conteo(16),
-                thinking: leer_conteo(17),
+                output: leer_conteo(15),
+                cache_read: leer_conteo(16),
+                cache_creation: leer_conteo(17),
+                thinking: leer_conteo(18),
             });
 
             Ok(SessionRow {
@@ -214,19 +222,20 @@ impl Store {
                 client: client_from_str(&r.get::<_, String>(1)?).unwrap_or(ClientKind::ClaudeCode),
                 anchor_path: PathBuf::from(r.get::<_, String>(2)?),
                 project: r.get::<_, Option<String>>(3)?.map(PathBuf::from),
-                branch: r.get(4)?,
-                warp_focus_url: r.get(5)?,
-                pid: r.get(6)?,
+                source_path: r.get::<_, Option<String>>(4)?.map(PathBuf::from),
+                branch: r.get(5)?,
+                warp_focus_url: r.get(6)?,
+                pid: r.get(7)?,
                 started_at: r
-                    .get::<_, Option<i64>>(7)?
+                    .get::<_, Option<i64>>(8)?
                     .and_then(|s| DateTime::from_timestamp(s, 0)),
-                last_activity: DateTime::from_timestamp(r.get::<_, i64>(8)?, 0)
+                last_activity: DateTime::from_timestamp(r.get::<_, i64>(9)?, 0)
                     .unwrap_or_else(Utc::now),
-                state: state_from_str(&r.get::<_, String>(9)?).unwrap_or(AgentState::Unknown),
-                confidence: confidence_from_str(&r.get::<_, String>(10)?)
+                state: state_from_str(&r.get::<_, String>(10)?).unwrap_or(AgentState::Unknown),
+                confidence: confidence_from_str(&r.get::<_, String>(11)?)
                     .unwrap_or(Confidence::Low),
-                parent_id: r.get(11)?,
-                depth: r.get(12)?,
+                parent_id: r.get(12)?,
+                depth: r.get(13)?,
                 metrics,
             })
         })?;
@@ -328,6 +337,7 @@ mod tests {
             client: ClientKind::ClaudeCode,
             anchor_path: PathBuf::from("/repo/.worktrees/x"),
             project: Some(PathBuf::from("/repo")),
+            source_path: Some(PathBuf::from("/logs/s.jsonl")),
             branch: Some("main".into()),
             warp_focus_url: Some("warp://session/abc".into()),
             pid: Some(42),

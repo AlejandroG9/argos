@@ -127,44 +127,51 @@ fn libre(esperando: &mut Vec<Option<String>>) -> usize {
 use crate::theme::{REDONDEO, color, color_de_carril, edad_legible, espacio};
 use std::collections::HashMap;
 
-const SEP_CARRIL: f32 = 20.0;
-const ALTO_FILA: f32 = 30.0;
+const SEP_COMMIT: f32 = 26.0;
+const SEP_CARRIL: f32 = 30.0;
 const RADIO: f32 = 5.0;
-const ANCHO_CARRILES: f32 = 150.0;
 
-/// Dibuja la historia: el tiempo baja y las ramas son carriles paralelos.
-/// Es la convención de cualquier visor de git, y funciona porque una historia
-/// larga se lee mejor en vertical.
+/// Dibuja la historia de izquierda a derecha: el tiempo avanza hacia la
+/// derecha y las ramas son carriles horizontales.
+///
+/// **Solo el árbol.** El texto de cada commit se revela al acercar el cursor
+/// y el detalle completo al pulsar: una pared de mensajes tapa la forma del
+/// árbol, que es lo que se viene a ver.
+///
+/// Devuelve el sha pulsado, si lo hubo.
 pub fn pintar_git(
     ui: &mut egui::Ui,
     grafo: &GrafoGit,
     estado_ramas: &HashMap<String, (u32, u32)>,
+    seleccionado: Option<&str>,
     now: DateTime<Utc>,
     zoom: f32,
-) {
-    let alto_fila = ALTO_FILA * zoom;
+) -> Option<String> {
+    let sep_commit = SEP_COMMIT * zoom;
     let sep_carril = SEP_CARRIL * zoom;
-    let ancho_carriles = (ANCHO_CARRILES * zoom).min(sep_carril * grafo.carriles as f32 + 40.0);
+    let radio = RADIO * zoom;
+
+    // El más antiguo a la izquierda: se lee como se lee, hacia adelante.
+    let ultimo = grafo.nodos.len().saturating_sub(1);
 
     let lienzo = egui::vec2(
-        ui.available_width().max(600.0),
-        grafo.nodos.len() as f32 * alto_fila + espacio::XL,
+        grafo.nodos.len() as f32 * sep_commit + espacio::XL * 4.0,
+        (grafo.carriles as f32 * sep_carril + espacio::XL * 2.0).max(180.0),
     );
-    let (respuesta, pintor) = ui.allocate_painter(lienzo, egui::Sense::hover());
-    let origen = respuesta.rect.min + egui::vec2(espacio::L, espacio::L);
+    let (respuesta, pintor) = ui.allocate_painter(lienzo, egui::Sense::click());
+    let origen = respuesta.rect.min + egui::vec2(espacio::XL, espacio::XL);
 
     let punto = |n: &NodoCommit| -> egui::Pos2 {
         origen
             + egui::vec2(
-                n.carril as f32 * sep_carril + RADIO * zoom,
-                n.fila as f32 * alto_fila,
+                (ultimo - n.fila) as f32 * sep_commit,
+                n.carril as f32 * sep_carril,
             )
     };
 
     let por_sha: HashMap<&str, &NodoCommit> =
         grafo.nodos.iter().map(|n| (n.sha.as_str(), n)).collect();
 
-    // Las líneas primero, para que pasen por detrás de los puntos.
     for a in &grafo.aristas {
         let (Some(hijo), Some(padre)) =
             (por_sha.get(a.hijo.as_str()), por_sha.get(a.padre.as_str()))
@@ -172,21 +179,19 @@ pub fn pintar_git(
             continue;
         };
 
-        let (desde, hasta) = (punto(hijo), punto(padre));
-        // El color lo pone el carril de destino: así una rama conserva el
-        // suyo al bajar y el merge se ve entrar en el carril principal.
+        let (desde, hasta) = (punto(padre), punto(hijo));
         let trazo = egui::Stroke::new(1.6 * zoom, color_de_carril(padre.carril));
 
-        if (desde.x - hasta.x).abs() < f32::EPSILON {
+        if (desde.y - hasta.y).abs() < f32::EPSILON {
             pintor.line_segment([desde, hasta], trazo);
         } else {
-            let medio = (desde.y + hasta.y) / 2.0;
+            let medio = (desde.x + hasta.x) / 2.0;
             pintor.add(egui::Shape::CubicBezier(
                 egui::epaint::CubicBezierShape::from_points_stroke(
                     [
                         desde,
-                        egui::pos2(desde.x, medio),
-                        egui::pos2(hasta.x, medio),
+                        egui::pos2(medio, desde.y),
+                        egui::pos2(medio, hasta.y),
                         hasta,
                     ],
                     false,
@@ -197,68 +202,85 @@ pub fn pintar_git(
         }
     }
 
+    let cursor = respuesta.hover_pos();
+    let mut pulsado = None;
+    let mut bajo_el_cursor: Option<&NodoCommit> = None;
+
     for n in &grafo.nodos {
         let c = punto(n);
         let col = color_de_carril(n.carril);
+        let cerca = cursor.is_some_and(|p| (p - c).length() < sep_commit * 0.6);
+        let activo = seleccionado == Some(n.sha.as_str());
 
-        // Un merge se dibuja hueco para distinguirlo de un commit normal.
-        if n.es_merge {
-            pintor.circle_stroke(c, RADIO * zoom, egui::Stroke::new(2.0 * zoom, col));
-        } else {
-            pintor.circle_filled(c, RADIO * zoom, col);
+        if cerca {
+            bajo_el_cursor = Some(n);
         }
 
-        let mut x = origen.x + ancho_carriles;
+        let r = if cerca || activo { radio * 1.5 } else { radio };
 
-        for texto in nombres_de_rama(&n.refs) {
-            let estado = estado_ramas.get(texto.as_str());
+        // Un merge va hueco para distinguirlo de un commit normal.
+        if n.es_merge {
+            pintor.circle_filled(c, r, color::FONDO);
+            pintor.circle_stroke(c, r, egui::Stroke::new(2.0 * zoom, col));
+        } else {
+            pintor.circle_filled(c, r, col);
+        }
+
+        if activo {
+            pintor.circle_stroke(c, r + 3.0 * zoom, egui::Stroke::new(1.5, color::TEXTO));
+        }
+
+        // Las puntas de rama sí llevan etiqueta siempre: son lo que orienta.
+        for (i, nombre) in nombres_de_rama(&n.refs).iter().enumerate() {
+            let estado = estado_ramas.get(nombre.as_str());
             let etiqueta = match estado {
-                Some((a, b)) if *a > 0 || *b > 0 => format!("{texto}  ↑{a} ↓{b}"),
-                _ => texto.clone(),
+                Some((a, b)) if *a > 0 || *b > 0 => format!("{nombre} ↑{a} ↓{b}"),
+                _ => nombre.clone(),
             };
 
             let galera = pintor.layout_no_wrap(
                 etiqueta,
-                egui::FontId::proportional(10.5 * zoom),
+                egui::FontId::proportional(10.0 * zoom),
                 color::TEXTO,
             );
             let caja = egui::Rect::from_min_size(
-                egui::pos2(x, c.y - galera.size().y / 2.0 - 2.0),
-                galera.size() + egui::vec2(espacio::S, 4.0),
+                egui::pos2(
+                    c.x - galera.size().x / 2.0,
+                    c.y - radio - 10.0 * zoom - i as f32 * 16.0 * zoom - galera.size().y,
+                ),
+                galera.size() + egui::vec2(espacio::S, 3.0),
             );
-            pintor.rect_filled(caja, REDONDEO * 0.5 * zoom, color::SUPERFICIE_ALTA);
+            pintor.rect_filled(caja, REDONDEO * 0.5, color::SUPERFICIE_ALTA);
             pintor.galley(
-                caja.min + egui::vec2(espacio::S / 2.0, 2.0),
+                caja.min + egui::vec2(espacio::S / 2.0, 1.5),
                 galera,
                 color::TEXTO,
             );
-            x = caja.max.x + espacio::S;
         }
 
-        pintor.text(
-            egui::pos2(x, c.y),
-            egui::Align2::LEFT_CENTER,
-            &n.sha,
-            egui::FontId::monospace(11.0 * zoom),
-            color::TEXTO_TENUE,
-        );
-
-        pintor.text(
-            egui::pos2(x + 70.0 * zoom, c.y),
-            egui::Align2::LEFT_CENTER,
-            &n.mensaje,
-            egui::FontId::proportional(12.5 * zoom),
-            color::TEXTO,
-        );
-
-        pintor.text(
-            egui::pos2(respuesta.rect.max.x - espacio::L, c.y),
-            egui::Align2::RIGHT_CENTER,
-            edad_legible((now - n.fecha).num_seconds()),
-            egui::FontId::proportional(11.0 * zoom),
-            color::TEXTO_TENUE,
-        );
+        if respuesta.clicked() && cerca {
+            pulsado = Some(n.sha.clone());
+        }
     }
+
+    // Al acercar el cursor: lo justo para identificar el commit sin taparlo.
+    if let Some(n) = bajo_el_cursor {
+        egui::Tooltip::always_open(
+            ui.ctx().clone(),
+            ui.layer_id(),
+            egui::Id::new("commit-tooltip"),
+            egui::PopupAnchor::Pointer,
+        )
+        .show(|ui| {
+            ui.horizontal(|ui| {
+                ui.monospace(&n.sha);
+                ui.weak(edad_legible((now - n.fecha).num_seconds()));
+            });
+            ui.label(&n.mensaje);
+        });
+    }
+
+    pulsado
 }
 
 #[cfg(test)]

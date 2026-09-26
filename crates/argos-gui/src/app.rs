@@ -61,6 +61,8 @@ pub struct ArgosApp {
     pub filter: Filter,
     pub ventana: Ventana,
     pub vista: Vista,
+    /// Commit seleccionado en la vista de git.
+    pub commit_abierto: Option<String>,
     zoom: f32,
     /// `None` = lista de proyectos vigilados. `Some` = dentro de ese proyecto.
     pub abierto: Option<Option<PathBuf>>,
@@ -111,6 +113,7 @@ impl ArgosApp {
             filter: Filter::default(),
             ventana: Ventana::default(),
             vista: Vista::default(),
+            commit_abierto: None,
             zoom: 1.0,
             abierto,
         }
@@ -247,7 +250,10 @@ impl eframe::App for ArgosApp {
             return;
         };
 
-        self.pintar_detalle(ctx, &snapshot);
+        match self.vista {
+            Vista::Git => self.pintar_detalle_commit(ctx, &snapshot),
+            Vista::Agentes => self.pintar_detalle(ctx, &snapshot),
+        }
 
         match self.abierto.clone() {
             None => self.pintar_proyectos(ctx, &snapshot),
@@ -257,6 +263,78 @@ impl eframe::App for ArgosApp {
 }
 
 impl ArgosApp {
+    fn pintar_detalle_commit(&mut self, ctx: &egui::Context, snapshot: &Snapshot) {
+        let Some(sha) = self.commit_abierto.clone() else {
+            return;
+        };
+        let Some(commit) = snapshot.commits.iter().find(|c| c.sha == sha).cloned() else {
+            return;
+        };
+
+        egui::SidePanel::right("detalle-commit")
+            .min_width(320.0)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.monospace(&commit.sha);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("✕").clicked() {
+                            self.commit_abierto = None;
+                        }
+                    });
+                });
+                ui.add_space(espacio::S);
+                ui.label(&commit.mensaje);
+                ui.add_space(espacio::M);
+
+                ui.weak(format!(
+                    "{} · {}",
+                    commit.autor,
+                    commit.fecha.format("%Y-%m-%d %H:%M")
+                ));
+                if commit.es_merge() {
+                    ui.weak(format!("merge de {} padres", commit.padres.len()));
+                }
+
+                let ramas = crate::git_vista::nombres_de_rama(&commit.refs);
+                if !ramas.is_empty() {
+                    ui.add_space(espacio::S);
+                    ui.weak(format!("en {}", ramas.join(", ")));
+                }
+
+                ui.separator();
+                ui.strong("Conversaciones que lo mencionan");
+
+                let sesiones = snapshot.menciones.sesiones_de(&commit.sha);
+                if sesiones.is_empty() {
+                    ui.weak("Ninguna sesión de agente menciona este commit.");
+                    return;
+                }
+
+                // "Menciona" y no "creó": una sesión que corrió `git log`
+                // menciona commits que no hizo. Ver `atribucion` en el núcleo.
+                for id in sesiones {
+                    let fila = snapshot.rows.iter().find(|r| r.id == id);
+                    ui.add_space(espacio::S);
+                    match fila {
+                        Some(f) => {
+                            ui.horizontal(|ui| {
+                                let (simbolo, color) = state_badge(f.state);
+                                ui.colored_label(color, simbolo);
+                                ui.label(f.client.label());
+                                ui.weak(state_label(f.state));
+                            });
+                            if let Some(m) = f.metrics {
+                                ui.weak(format!("{} tokens en la sesión", m.total()));
+                            }
+                        }
+                        None => {
+                            ui.weak(format!("sesión {id} (fuera de la vista actual)"));
+                        }
+                    }
+                }
+            });
+    }
+
     fn pintar_detalle(&mut self, ctx: &egui::Context, snapshot: &Snapshot) {
         let Some(id) = self.selected.clone() else {
             return;
@@ -389,7 +467,16 @@ impl ArgosApp {
                     egui::ScrollArea::both()
                         .scroll_source(egui::scroll_area::ScrollSource::ALL)
                         .show(ui, |ui| {
-                            pintar_git(ui, &grafo, &snapshot.ramas, now, self.zoom);
+                            if let Some(sha) = pintar_git(
+                                ui,
+                                &grafo,
+                                &snapshot.ramas,
+                                self.commit_abierto.as_deref(),
+                                now,
+                                self.zoom,
+                            ) {
+                                self.commit_abierto = Some(sha);
+                            }
                         });
                 }
                 Vista::Agentes => {

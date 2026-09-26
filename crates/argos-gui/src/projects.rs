@@ -94,6 +94,7 @@ mod tests {
             client: ClientKind::ClaudeCode,
             anchor_path: PathBuf::from("/x"),
             project: proyecto.map(PathBuf::from),
+            source_path: None,
             branch: Some("main".into()),
             warp_focus_url: None,
             pid: None,
