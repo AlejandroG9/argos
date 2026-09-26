@@ -1,6 +1,6 @@
 pub mod claude;
+pub mod codex;
 pub mod process;
-
 use crate::error::ProbeError;
 use crate::model::ClientKind;
 use crate::observation::{Capabilities, SessionObservation};
