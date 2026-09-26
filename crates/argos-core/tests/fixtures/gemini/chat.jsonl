@@ -1,0 +1,3 @@
+{"sessionId":"1ff8e605-7666-45dc-bc8c-d7b3c5a72970","projectHash":"anonimizado","startTime":"2026-05-31T19:01:26.550Z","lastUpdated":"2026-05-31T19:01:26.550Z","kind":"main"}
+{"$set":{"messages":[{"id":"mensaje-1","timestamp":"2026-05-31T19:01:26.551Z","type":"user","content":[{"text":"hola"}]}],"lastUpdated":"2026-05-31T19:01:26.551Z"}}
+{"id":"mensaje-2","timestamp":"2026-05-31T19:01:30.000Z","type":"gemini","content":[{"text":"¿en qué te ayudo?"}]}
