@@ -1,0 +1,2 @@
+{"type":"user","cwd":"/Users/alex/Proyectos/Orion","gitBranch":"main","timestamp":"2026-09-26T12:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"hola"}]}}
+{"type":"assistant","cwd":"/Users/alex/Proyectos/Orion","gitBranch":"main","timestamp":"2026-09-26T12:00:05.000Z","message":{"role":"assistant","usage":{"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":100,"cache_creation_input_tokens":50,"output_tokens_details":{"thinking_tokens":5}},"content":[{"type":"text","text":"listo, ¿algo más?"}]}}

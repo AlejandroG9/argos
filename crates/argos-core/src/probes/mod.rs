@@ -1,3 +1,4 @@
+pub mod claude;
 pub mod process;
 
 use crate::error::ProbeError;
