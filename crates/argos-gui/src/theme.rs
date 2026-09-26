@@ -21,6 +21,18 @@ pub fn state_label(state: AgentState) -> &'static str {
     }
 }
 
+/// Una antigüedad en segundos crudos ("hace 96423s") es ilegible de un
+/// vistazo, que es justo lo que el tablero promete.
+pub fn edad_legible(segundos: i64) -> String {
+    let s = segundos.max(0);
+    match s {
+        0..=59 => format!("hace {s}s"),
+        60..=3599 => format!("hace {}m", s / 60),
+        3600..=86399 => format!("hace {}h", s / 3600),
+        _ => format!("hace {}d", s / 86400),
+    }
+}
+
 /// Una inferencia dudosa se muestra como dudosa (spec §4).
 pub fn confidence_hint(confidence: Confidence) -> Option<&'static str> {
     match confidence {
@@ -51,6 +63,23 @@ mod tests {
 
         let unicos: std::collections::HashSet<_> = simbolos.iter().collect();
         assert_eq!(unicos.len(), 4, "los símbolos deben distinguirse entre sí");
+    }
+
+    /// "hace 96423s" es lo que mostraba antes: 26 horas en segundos crudos.
+    #[test]
+    fn la_edad_se_muestra_en_la_unidad_que_se_lee_de_un_vistazo() {
+        assert_eq!(edad_legible(5), "hace 5s");
+        assert_eq!(edad_legible(59), "hace 59s");
+        assert_eq!(edad_legible(60), "hace 1m");
+        assert_eq!(edad_legible(3599), "hace 59m");
+        assert_eq!(edad_legible(3600), "hace 1h");
+        assert_eq!(edad_legible(96423), "hace 1d");
+        assert_eq!(edad_legible(310802), "hace 3d");
+    }
+
+    #[test]
+    fn una_edad_negativa_por_desfase_de_reloj_no_se_muestra_absurda() {
+        assert_eq!(edad_legible(-10), "hace 0s");
     }
 
     #[test]

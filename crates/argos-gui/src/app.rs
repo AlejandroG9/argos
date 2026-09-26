@@ -1,5 +1,5 @@
 use crate::jump::jump_to;
-use crate::theme::{confidence_hint, state_badge, state_label};
+use crate::theme::{confidence_hint, edad_legible, state_badge, state_label};
 use argos_core::model::AgentState;
 use argos_core::monitor::{Monitor, MonitorConfig, Snapshot};
 use argos_core::store::SessionRow;
@@ -11,9 +11,12 @@ const REFRESH: Duration = Duration::from_secs(3);
 
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum Filter {
-    #[default]
     All,
     NeedsAttention,
+    /// Por defecto: con cientos de sesiones históricas en disco, abrir en
+    /// "Todas" entierra lo que está pasando ahora bajo una pared de
+    /// subagentes terminados hace días.
+    #[default]
     Active,
 }
 
@@ -222,9 +225,8 @@ impl eframe::App for ArgosApp {
                                         self.selected = Some(fila.id.clone());
                                     }
 
-                                    let edad =
-                                        (Utc::now() - fila.last_activity).num_seconds().max(0);
-                                    ui.weak(format!("hace {edad}s"));
+                                    let edad = (Utc::now() - fila.last_activity).num_seconds();
+                                    ui.weak(edad_legible(edad));
                                 });
                             }
                         });
