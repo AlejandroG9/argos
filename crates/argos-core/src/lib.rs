@@ -2,6 +2,7 @@ pub mod correlator;
 pub mod discovery;
 pub mod error;
 pub mod model;
+pub mod monitor;
 pub mod observation;
 pub mod probes;
 pub mod state_engine;
