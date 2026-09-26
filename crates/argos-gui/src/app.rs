@@ -1,4 +1,4 @@
-use crate::git_vista::{pintar_git, tender_carriles};
+use crate::git_vista::{ancho_estimado, pintar_git, tender_carriles};
 use crate::jump::jump_to;
 use crate::nodos::{construir_grafo, pintar_grafo};
 use crate::projects::{nombre_de_proyecto, summarize_projects};
@@ -63,6 +63,9 @@ pub struct ArgosApp {
     pub vista: Vista,
     /// Commit seleccionado en la vista de git.
     pub commit_abierto: Option<String>,
+    /// La vista de git abre por el extremo reciente; solo la primera vez,
+    /// para no arrastrar al usuario de vuelta cada refresco.
+    git_centrado: bool,
     zoom: f32,
     /// `None` = lista de proyectos vigilados. `Some` = dentro de ese proyecto.
     pub abierto: Option<Option<PathBuf>>,
@@ -114,6 +117,7 @@ impl ArgosApp {
             ventana: Ventana::default(),
             vista: Vista::default(),
             commit_abierto: None,
+            git_centrado: false,
             zoom: 1.0,
             abierto,
         }
@@ -129,6 +133,7 @@ impl ArgosApp {
         // Directo a sus ramas: pasar por una lista de un solo proyecto sobra.
         self.abierto = Some(Some(path));
         self.selected = None;
+        self.git_centrado = false;
         self.pantalla = Pantalla::Monitoreo;
     }
 
@@ -464,20 +469,31 @@ impl ArgosApp {
                     }
 
                     let grafo = tender_carriles(&commits);
-                    egui::ScrollArea::both()
-                        .scroll_source(egui::scroll_area::ScrollSource::ALL)
-                        .show(ui, |ui| {
-                            if let Some(sha) = pintar_git(
-                                ui,
-                                &grafo,
-                                &snapshot.ramas,
-                                self.commit_abierto.as_deref(),
-                                now,
-                                self.zoom,
-                            ) {
-                                self.commit_abierto = Some(sha);
-                            }
-                        });
+                    let mut area = egui::ScrollArea::both()
+                        .scroll_source(egui::scroll_area::ScrollSource::ALL);
+
+                    // Lo reciente está a la derecha y es lo que se viene a
+                    // ver, así que la vista abre ahí en vez de en el commit
+                    // inicial del repo. Solo la primera vez: después manda
+                    // el usuario.
+                    if !self.git_centrado {
+                        area = area.horizontal_scroll_offset(ancho_estimado(&grafo, self.zoom));
+                        self.git_centrado = true;
+                    }
+
+                    area.show(ui, |ui| {
+                        if let Some(sha) = pintar_git(
+                            ui,
+                            &grafo,
+                            &snapshot.ramas,
+                            &snapshot.rows,
+                            self.commit_abierto.as_deref(),
+                            now,
+                            self.zoom,
+                        ) {
+                            self.commit_abierto = Some(sha);
+                        }
+                    });
                 }
                 Vista::Agentes => {
                     let filas = self.filas_del_proyecto(&project, snapshot);

@@ -124,12 +124,48 @@ fn libre(esperando: &mut Vec<Option<String>>) -> usize {
 
 // --- pintado ---------------------------------------------------------------
 
-use crate::theme::{REDONDEO, color, color_de_carril, edad_legible, espacio};
+use crate::theme::{
+    REDONDEO, color, color_de_carril, edad_legible, espacio, inicial_de_cliente, state_badge,
+};
 use std::collections::HashMap;
 
-const SEP_COMMIT: f32 = 26.0;
-const SEP_CARRIL: f32 = 30.0;
-const RADIO: f32 = 5.0;
+// Dimensionados para que quepa la insignia de un agente dentro del nodo
+// sin que los puntos se toquen.
+const SEP_COMMIT: f32 = 46.0;
+const SEP_CARRIL: f32 = 62.0;
+const RADIO: f32 = 11.0;
+
+/// Agentes presentes ahora mismo en las ramas que apuntan a este commit.
+///
+/// Solo los activos: un agente que terminó ya no está ahí, y marcarlo daría
+/// la impresión de actividad donde no la hay.
+pub fn agentes_en_punta<'a>(
+    refs: &[String],
+    filas: &'a [argos_core::store::SessionRow],
+) -> Vec<&'a argos_core::store::SessionRow> {
+    use argos_core::model::AgentState;
+
+    let ramas = nombres_de_rama(refs);
+    if ramas.is_empty() {
+        return Vec::new();
+    }
+
+    filas
+        .iter()
+        .filter(|f| matches!(f.state, AgentState::Working | AgentState::Waiting))
+        .filter(|f| {
+            f.branch
+                .as_ref()
+                .is_some_and(|b| ramas.iter().any(|r| r == b))
+        })
+        .collect()
+}
+
+/// Ancho que ocupará el grafo, para poder abrir la vista por su extremo
+/// derecho sin recurrir a un desplazamiento infinito.
+pub fn ancho_estimado(grafo: &GrafoGit, zoom: f32) -> f32 {
+    grafo.nodos.len() as f32 * SEP_COMMIT * zoom + espacio::XL * 4.0
+}
 
 /// Dibuja la historia de izquierda a derecha: el tiempo avanza hacia la
 /// derecha y las ramas son carriles horizontales.
@@ -143,6 +179,7 @@ pub fn pintar_git(
     ui: &mut egui::Ui,
     grafo: &GrafoGit,
     estado_ramas: &HashMap<String, (u32, u32)>,
+    filas: &[argos_core::store::SessionRow],
     seleccionado: Option<&str>,
     now: DateTime<Utc>,
     zoom: f32,
@@ -154,12 +191,16 @@ pub fn pintar_git(
     // El más antiguo a la izquierda: se lee como se lee, hacia adelante.
     let ultimo = grafo.nodos.len().saturating_sub(1);
 
+    // Las etiquetas de rama se dibujan encima de su commit, así que el
+    // primer carril necesita sitio o quedan recortadas contra el borde.
+    let margen_arriba = espacio::XL * 2.0;
+
     let lienzo = egui::vec2(
         grafo.nodos.len() as f32 * sep_commit + espacio::XL * 4.0,
-        (grafo.carriles as f32 * sep_carril + espacio::XL * 2.0).max(180.0),
+        (grafo.carriles as f32 * sep_carril + margen_arriba + espacio::XL).max(200.0),
     );
     let (respuesta, pintor) = ui.allocate_painter(lienzo, egui::Sense::click());
-    let origen = respuesta.rect.min + egui::vec2(espacio::XL, espacio::XL);
+    let origen = respuesta.rect.min + egui::vec2(espacio::XL, margen_arriba);
 
     let punto = |n: &NodoCommit| -> egui::Pos2 {
         origen
@@ -227,7 +268,35 @@ pub fn pintar_git(
         }
 
         if activo {
-            pintor.circle_stroke(c, r + 3.0 * zoom, egui::Stroke::new(1.5, color::TEXTO));
+            pintor.circle_stroke(c, r + 4.0 * zoom, egui::Stroke::new(1.5, color::TEXTO));
+        }
+
+        // Si un agente trabaja ahora en la punta de esta rama, su insignia va
+        // dentro del nodo: es lo que une este árbol con la vista de agentes.
+        let agentes = agentes_en_punta(&n.refs, filas);
+        if let Some(agente) = agentes.first() {
+            let (_, color_estado) = state_badge(agente.state);
+
+            pintor.circle_filled(c, r * 0.82, color::FONDO);
+            pintor.circle_stroke(c, r * 0.82, egui::Stroke::new(2.0 * zoom, color_estado));
+            pintor.text(
+                c,
+                egui::Align2::CENTER_CENTER,
+                inicial_de_cliente(agente.client),
+                egui::FontId::proportional(11.0 * zoom),
+                color_estado,
+            );
+
+            // Más de uno: un contador discreto en vez de apilar insignias.
+            if agentes.len() > 1 {
+                pintor.text(
+                    c + egui::vec2(r, -r),
+                    egui::Align2::CENTER_CENTER,
+                    format!("{}", agentes.len()),
+                    egui::FontId::proportional(9.0 * zoom),
+                    color::TEXTO_TENUE,
+                );
+            }
         }
 
         // Las puntas de rama sí llevan etiqueta siempre: son lo que orienta.
@@ -246,7 +315,7 @@ pub fn pintar_git(
             let caja = egui::Rect::from_min_size(
                 egui::pos2(
                     c.x - galera.size().x / 2.0,
-                    c.y - radio - 10.0 * zoom - i as f32 * 16.0 * zoom - galera.size().y,
+                    c.y - radio - 12.0 * zoom - i as f32 * 17.0 * zoom - galera.size().y,
                 ),
                 galera.size() + egui::vec2(espacio::S, 3.0),
             );
@@ -408,6 +477,75 @@ mod tests {
     fn una_etiqueta_de_version_no_es_una_rama() {
         let refs = vec!["tag: v1.0".to_string(), "feat/x".to_string()];
         assert_eq!(nombres_de_rama(&refs), vec!["feat/x"]);
+    }
+
+    /// La punta de una rama es donde un agente está trabajando ahora: es lo
+    /// que une el árbol de git con la vista de agentes.
+    #[test]
+    fn un_commit_en_la_punta_de_una_rama_recoge_a_sus_agentes_activos() {
+        use argos_core::model::{AgentState, ClientKind, Confidence};
+        use std::path::PathBuf;
+
+        let fila = |rama: &str, estado: AgentState| argos_core::store::SessionRow {
+            id: format!("{rama}-{estado:?}"),
+            client: ClientKind::ClaudeCode,
+            anchor_path: PathBuf::from("/repo"),
+            project: None,
+            source_path: None,
+            branch: Some(rama.to_string()),
+            warp_focus_url: None,
+            pid: None,
+            started_at: None,
+            last_activity: Utc::now(),
+            state: estado,
+            confidence: Confidence::High,
+            parent_id: None,
+            depth: 0,
+            metrics: None,
+        };
+
+        let filas = vec![
+            fila("main", AgentState::Working),
+            fila("main", AgentState::Finished),
+            fila("otra", AgentState::Waiting),
+        ];
+
+        let refs = vec!["main".to_string()];
+        let activos = agentes_en_punta(&refs, &filas);
+
+        assert_eq!(activos.len(), 1, "solo el que está trabajando");
+        assert_eq!(activos[0].state, AgentState::Working);
+    }
+
+    #[test]
+    fn un_agente_esperando_respuesta_tambien_cuenta_como_presente() {
+        use argos_core::model::{AgentState, ClientKind, Confidence};
+        use std::path::PathBuf;
+
+        let filas = vec![argos_core::store::SessionRow {
+            id: "s".into(),
+            client: ClientKind::Codex,
+            anchor_path: PathBuf::from("/repo"),
+            project: None,
+            source_path: None,
+            branch: Some("main".into()),
+            warp_focus_url: None,
+            pid: None,
+            started_at: None,
+            last_activity: Utc::now(),
+            state: AgentState::Waiting,
+            confidence: Confidence::High,
+            parent_id: None,
+            depth: 0,
+            metrics: None,
+        }];
+
+        assert_eq!(agentes_en_punta(&["main".to_string()], &filas).len(), 1);
+    }
+
+    #[test]
+    fn un_commit_sin_etiqueta_de_rama_no_tiene_agentes() {
+        assert!(agentes_en_punta(&[], &[]).is_empty());
     }
 
     #[test]

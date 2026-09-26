@@ -28,6 +28,19 @@ pub mod espacio {
 
 pub const REDONDEO: f32 = 8.0;
 
+/// Una letra por plataforma para la insignia del nodo. No son los logotipos
+/// reales —eso necesitaría empaquetar imágenes— pero distinguen de un
+/// vistazo, que es lo que hace falta a este tamaño.
+pub fn inicial_de_cliente(c: argos_core::model::ClientKind) -> &'static str {
+    use argos_core::model::ClientKind;
+    match c {
+        ClientKind::ClaudeCode => "C",
+        ClientKind::Codex => "X",
+        ClientKind::GeminiCli => "G",
+        ClientKind::Antigravity => "A",
+    }
+}
+
 /// Un color por carril para poder seguir una rama con la vista. Se repiten
 /// al agotarse: más de seis ramas simultáneas ya no se distinguen por color
 /// por muchos que añadas.
