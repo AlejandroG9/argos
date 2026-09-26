@@ -1,3 +1,4 @@
+use crate::cache::ParseCache;
 use crate::error::ProbeError;
 use crate::model::{ClientKind, SessionId, TokenMetrics};
 use crate::observation::{ActivitySemantics, Capabilities, SessionObservation};
@@ -173,11 +174,15 @@ pub fn slug_en_alcance(nombre_dir: &str, scope: &Scope) -> bool {
 
 pub struct ClaudeProbe {
     root: PathBuf,
+    cache: ParseCache,
 }
 
 impl ClaudeProbe {
     pub fn new(root: PathBuf) -> Self {
-        ClaudeProbe { root }
+        ClaudeProbe {
+            root,
+            cache: ParseCache::new(),
+        }
     }
 
     pub fn default_root() -> PathBuf {
@@ -229,12 +234,10 @@ impl SessionProbe for ClaudeProbe {
                 let Some(identity) = identity_from_path(path) else {
                     continue;
                 };
-                let Ok(contents) = std::fs::read_to_string(path) else {
-                    continue;
-                };
-                if let Some(observation) =
-                    parse_session(&contents, path, identity.id, identity.parent_id)
-                    && scope.contains(&observation.anchor_path)
+                let SessionIdentity { id, parent_id } = identity;
+                if let Some(observation) = self.cache.get_or_parse(path, move |contents| {
+                    parse_session(contents, path, id, parent_id)
+                }) && scope.contains(&observation.anchor_path)
                 {
                     // El prefiltro pudo dejar pasar un hermano con nombre
                     // prefijo; el cwd del archivo es la palabra final.
