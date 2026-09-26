@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn el_ancla_viene_del_project_root_no_del_chat() {
-        let dir = tempdir();
+        let dir = tempdir("con-project-root");
         let proyecto = dir.join("orion");
         std::fs::create_dir_all(proyecto.join("chats")).expect("crear dirs");
         std::fs::write(
@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn sin_project_root_no_se_puede_anclar() {
-        let dir = tempdir();
+        let dir = tempdir("sin-project-root");
         std::fs::create_dir_all(&dir).expect("crear dir");
         assert_eq!(read_project_root(&dir), None);
     }
@@ -195,8 +195,10 @@ mod tests {
         );
     }
 
-    fn tempdir() -> PathBuf {
-        let p = std::env::temp_dir().join(format!("argos-gemini-{}", std::process::id()));
+    /// El nombre lo da quien llama: los tests corren en paralelo y un
+    /// directorio compartido se borraría bajo los pies del otro test.
+    fn tempdir(nombre: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("argos-gemini-{}-{nombre}", std::process::id()));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).expect("crear tempdir");
         p
