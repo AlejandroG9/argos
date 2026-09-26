@@ -1,7 +1,8 @@
 use crate::jump::jump_to;
+use crate::nodos::{construir_grafo, pintar_grafo};
 use crate::projects::{nombre_de_proyecto, summarize_projects};
 use crate::selector::{ProyectoDisponible, marcar_seleccion};
-use crate::theme::{confidence_hint, edad_legible, state_badge, state_label};
+use crate::theme::{espacio, state_badge, state_label};
 use crate::ventana::Ventana;
 use argos_core::discovery::find_repos;
 use argos_core::model::AgentState;
@@ -9,8 +10,7 @@ use argos_core::monitor::{MonitorConfig, Snapshot};
 use argos_core::scope::Scope;
 use argos_core::store::{SessionRow, Store};
 use argos_core::watcher::{EstadoSondeo, Watcher};
-use chrono::{DateTime, Utc};
-use std::collections::BTreeMap;
+use chrono::Utc;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -52,6 +52,7 @@ pub struct ArgosApp {
     pub selected: Option<String>,
     pub filter: Filter,
     pub ventana: Ventana,
+    zoom: f32,
     /// `None` = lista de proyectos vigilados. `Some` = dentro de ese proyecto.
     pub abierto: Option<Option<PathBuf>>,
 }
@@ -100,6 +101,7 @@ impl ArgosApp {
             selected: None,
             filter: Filter::default(),
             ventana: Ventana::default(),
+            zoom: 1.0,
             abierto,
         }
     }
@@ -155,67 +157,6 @@ impl ArgosApp {
     }
 }
 
-pub struct Grupo {
-    pub rama: String,
-    pub filas: Vec<SessionRow>,
-}
-
-impl Grupo {
-    /// El estado más urgente del grupo decide dónde se muestra y si abre solo.
-    fn urgencia(&self) -> u8 {
-        self.filas
-            .iter()
-            .map(|f| f.state.urgency())
-            .min()
-            .unwrap_or(u8::MAX)
-    }
-
-    pub fn reclama_atencion(&self) -> bool {
-        self.filas.iter().any(|f| f.state == AgentState::Waiting)
-    }
-}
-
-/// Agrupa por rama y **ordena los grupos por urgencia**, no alfabéticamente:
-/// una rama con un agente esperando respuesta tiene que salir arriba, o el
-/// tablero deja de responder de un vistazo la pregunta que lo justifica.
-///
-/// Devuelve filas propias, no referencias: el árbol muta la selección
-/// mientras itera, y un préstamo vivo durante el recorrido lo impediría.
-pub fn group_by_branch(
-    rows: &[SessionRow],
-    filter: Filter,
-    ventana: Ventana,
-    now: DateTime<Utc>,
-) -> Vec<Grupo> {
-    let mut por_rama: BTreeMap<String, Vec<SessionRow>> = BTreeMap::new();
-
-    for row in rows {
-        if !filter.acepta(row.state) || !ventana.acepta(row.last_activity, now) {
-            continue;
-        }
-
-        let clave = row
-            .branch
-            .clone()
-            .unwrap_or_else(|| format!("(sin rama) {}", row.anchor_path.display()));
-        por_rama.entry(clave).or_default().push(row.clone());
-    }
-
-    let mut grupos: Vec<Grupo> = por_rama
-        .into_iter()
-        .map(|(rama, filas)| Grupo { rama, filas })
-        .collect();
-
-    // El nombre desempata para que el orden sea estable entre refrescos.
-    grupos.sort_by(|a, b| {
-        a.urgencia()
-            .cmp(&b.urgencia())
-            .then_with(|| a.rama.cmp(&b.rama))
-    });
-
-    grupos
-}
-
 impl Default for ArgosApp {
     fn default() -> Self {
         Self::new()
@@ -224,6 +165,8 @@ impl Default for ArgosApp {
 
 impl eframe::App for ArgosApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        crate::theme::aplicar_estilo(ctx);
+
         // No bloquea: si el hilo aún no publicó nada, seguimos con lo último
         // que teníamos. Aquí es donde la ventana deja de congelarse.
         if let Some(s) = self.watcher.latest() {
@@ -391,147 +334,40 @@ impl ArgosApp {
 
     fn pintar_ramas(&mut self, ctx: &egui::Context, project: Option<PathBuf>, snapshot: &Snapshot) {
         let filas = self.filas_del_proyecto(&project, snapshot);
-        let grupos = group_by_branch(&filas, self.filter, self.ventana, Utc::now());
+        let grafo = construir_grafo(&filas, self.filter, self.ventana, Utc::now());
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("← Proyectos").clicked() {
-                    self.abierto = None;
-                    self.selected = None;
+                    self.pantalla = Pantalla::Selector;
                 }
                 ui.heading(nombre_de_proyecto(project.as_ref()));
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.small_button("+").clicked() {
+                        self.zoom = (self.zoom * 1.15).min(2.0);
+                    }
+                    if ui.small_button("−").clicked() {
+                        self.zoom = (self.zoom / 1.15).max(0.5);
+                    }
+                    ui.weak(format!("{:.0}%", self.zoom * 100.0));
+                });
             });
-            ui.separator();
+            ui.add_space(espacio::S);
 
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                for grupo in grupos {
-                    // Lo que te espera se abre solo; lo terminado queda plegado.
-                    let abierto = grupo.reclama_atencion();
-                    egui::CollapsingHeader::new(&grupo.rama)
-                        .default_open(abierto)
-                        .show(ui, |ui| {
-                            for fila in grupo.filas {
-                                let (simbolo, color) = state_badge(fila.state);
-                                let sangria = if fila.parent_id.is_some() { 20.0 } else { 0.0 };
+            if grafo.nodos.is_empty() {
+                ui.weak("Nada que mostrar con los filtros actuales.");
+                return;
+            }
 
-                                ui.horizontal(|ui| {
-                                    ui.add_space(sangria);
-                                    ui.colored_label(color, simbolo);
-
-                                    let etiqueta = format!(
-                                        "{} · {}{}",
-                                        fila.client.label(),
-                                        state_label(fila.state),
-                                        confidence_hint(fila.confidence).unwrap_or(""),
-                                    );
-
-                                    if ui
-                                        .selectable_label(
-                                            self.selected.as_deref() == Some(fila.id.as_str()),
-                                            etiqueta,
-                                        )
-                                        .clicked()
-                                    {
-                                        self.selected = Some(fila.id.clone());
-                                    }
-
-                                    let edad = (Utc::now() - fila.last_activity).num_seconds();
-                                    ui.weak(edad_legible(edad));
-                                });
-                            }
-                        });
-                }
-            });
+            egui::ScrollArea::both()
+                .scroll_source(egui::scroll_area::ScrollSource::ALL)
+                .show(ui, |ui| {
+                    if let Some(id) = pintar_grafo(ui, &grafo, self.selected.as_deref(), self.zoom)
+                    {
+                        self.selected = Some(id);
+                    }
+                });
         });
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use argos_core::model::{ClientKind, Confidence};
-    use chrono::Utc;
-    use std::path::PathBuf;
-
-    fn fila(rama: &str, state: AgentState) -> SessionRow {
-        SessionRow {
-            id: format!("{rama}-{state:?}"),
-            client: ClientKind::ClaudeCode,
-            anchor_path: PathBuf::from("/repo"),
-            project: Some(PathBuf::from("/repo")),
-            branch: Some(rama.to_string()),
-            warp_focus_url: None,
-            pid: None,
-            started_at: None,
-            last_activity: Utc::now(),
-            state,
-            confidence: Confidence::High,
-            parent_id: None,
-            depth: 0,
-            metrics: None,
-        }
-    }
-
-    /// El spec §8: lo que reclama tu atención va arriba. Con orden
-    /// alfabético, una rama con un agente esperándote queda enterrada.
-    #[test]
-    fn los_grupos_se_ordenan_por_urgencia_no_por_nombre() {
-        let rows = vec![
-            fila("aaa-terminada", AgentState::Finished),
-            fila("zzz-te-espera", AgentState::Waiting),
-            fila("mmm-trabajando", AgentState::Working),
-        ];
-
-        let grupos = group_by_branch(&rows, Filter::All, Ventana::Todo, Utc::now());
-        let orden: Vec<&str> = grupos.iter().map(|g| g.rama.as_str()).collect();
-
-        assert_eq!(
-            orden,
-            vec!["zzz-te-espera", "mmm-trabajando", "aaa-terminada"]
-        );
-    }
-
-    #[test]
-    fn un_grupo_con_alguien_esperando_reclama_atencion() {
-        let grupos = group_by_branch(
-            &[fila("x", AgentState::Waiting)],
-            Filter::All,
-            Ventana::Todo,
-            Utc::now(),
-        );
-        assert!(grupos[0].reclama_atencion());
-
-        let grupos = group_by_branch(
-            &[fila("y", AgentState::Finished)],
-            Filter::All,
-            Ventana::Todo,
-            Utc::now(),
-        );
-        assert!(!grupos[0].reclama_atencion());
-    }
-
-    #[test]
-    fn el_filtro_me_esperan_deja_solo_lo_bloqueado() {
-        let rows = vec![
-            fila("a", AgentState::Waiting),
-            fila("b", AgentState::Working),
-            fila("c", AgentState::Finished),
-        ];
-
-        let grupos = group_by_branch(&rows, Filter::NeedsAttention, Ventana::Todo, Utc::now());
-        assert_eq!(grupos.len(), 1);
-        assert_eq!(grupos[0].rama, "a");
-    }
-
-    #[test]
-    fn ramas_con_la_misma_urgencia_conservan_orden_estable_por_nombre() {
-        let rows = vec![
-            fila("zzz", AgentState::Working),
-            fila("aaa", AgentState::Working),
-        ];
-
-        let grupos = group_by_branch(&rows, Filter::All, Ventana::Todo, Utc::now());
-        let orden: Vec<&str> = grupos.iter().map(|g| g.rama.as_str()).collect();
-        assert_eq!(orden, vec!["aaa", "zzz"]);
     }
 }

@@ -1,6 +1,78 @@
 use argos_core::model::{AgentState, Confidence};
 use egui::Color32;
 
+/// Paleta corta y contenida. Lo que hace que una interfaz se vea cuidada no
+/// es el renderizador sino la disciplina: pocos colores, una escala de
+/// espaciado, y jerarquía tipográfica real.
+pub mod color {
+    use egui::Color32;
+
+    pub const FONDO: Color32 = Color32::from_rgb(0x14, 0x16, 0x1A);
+    pub const SUPERFICIE: Color32 = Color32::from_rgb(0x1C, 0x1F, 0x26);
+    pub const SUPERFICIE_ALTA: Color32 = Color32::from_rgb(0x26, 0x2A, 0x33);
+    pub const BORDE: Color32 = Color32::from_rgb(0x2E, 0x33, 0x3D);
+    pub const TEXTO: Color32 = Color32::from_rgb(0xE4, 0xE7, 0xEC);
+    pub const TEXTO_TENUE: Color32 = Color32::from_rgb(0x8B, 0x93, 0xA1);
+    pub const ACENTO: Color32 = Color32::from_rgb(0x5B, 0x8D, 0xEF);
+    pub const LINEA: Color32 = Color32::from_rgb(0x39, 0x3F, 0x4B);
+}
+
+/// Escala de espaciado. Usar siempre estos valores y no números sueltos es
+/// la mitad de por qué una interfaz se ve ordenada.
+pub mod espacio {
+    pub const S: f32 = 8.0;
+    pub const M: f32 = 12.0;
+    pub const L: f32 = 16.0;
+    pub const XL: f32 = 24.0;
+}
+
+pub const REDONDEO: f32 = 8.0;
+
+/// Aplica la identidad visual al contexto. Sin esto, egui se ve como egui.
+pub fn aplicar_estilo(ctx: &egui::Context) {
+    let mut estilo = (*ctx.style()).clone();
+
+    estilo.visuals.dark_mode = true;
+    estilo.visuals.panel_fill = color::FONDO;
+    estilo.visuals.window_fill = color::FONDO;
+    estilo.visuals.extreme_bg_color = color::FONDO;
+    estilo.visuals.override_text_color = Some(color::TEXTO);
+
+    let r = egui::CornerRadius::same(REDONDEO as u8);
+    for w in [
+        &mut estilo.visuals.widgets.noninteractive,
+        &mut estilo.visuals.widgets.inactive,
+        &mut estilo.visuals.widgets.hovered,
+        &mut estilo.visuals.widgets.active,
+        &mut estilo.visuals.widgets.open,
+    ] {
+        w.corner_radius = r;
+    }
+    estilo.visuals.widgets.inactive.weak_bg_fill = color::SUPERFICIE;
+    estilo.visuals.widgets.hovered.weak_bg_fill = color::SUPERFICIE_ALTA;
+    estilo.visuals.widgets.active.weak_bg_fill = color::SUPERFICIE_ALTA;
+    estilo.visuals.selection.bg_fill = color::ACENTO.gamma_multiply(0.35);
+
+    estilo.spacing.item_spacing = egui::vec2(espacio::S, espacio::S);
+    estilo.spacing.button_padding = egui::vec2(espacio::M, espacio::S);
+    estilo.spacing.window_margin = egui::Margin::same(espacio::L as i8);
+
+    use egui::{FontFamily::Proportional, FontId, TextStyle};
+    estilo.text_styles = [
+        (TextStyle::Heading, FontId::new(19.0, Proportional)),
+        (TextStyle::Body, FontId::new(13.5, Proportional)),
+        (TextStyle::Button, FontId::new(13.0, Proportional)),
+        (TextStyle::Small, FontId::new(11.5, Proportional)),
+        (
+            TextStyle::Monospace,
+            FontId::new(12.5, egui::FontFamily::Monospace),
+        ),
+    ]
+    .into();
+
+    ctx.set_style(estilo);
+}
+
 /// Símbolo y color por estado. El símbolo es obligatorio: el color solo
 /// refuerza, nunca es la única señal (spec §8).
 pub fn state_badge(state: AgentState) -> (&'static str, Color32) {
