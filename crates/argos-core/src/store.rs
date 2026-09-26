@@ -36,7 +36,7 @@ pub struct Store {
 /// Se sube al cambiar el esquema. Como la base es un índice derivado de los
 /// logs (spec §7), una versión distinta se resuelve tirando las tablas y
 /// reconstruyendo, no migrando datos.
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 const DROP: &str = "DROP TABLE IF EXISTS samples; DROP TABLE IF EXISTS sessions;";
 
@@ -71,6 +71,13 @@ CREATE TABLE IF NOT EXISTS samples (
 );
 
 CREATE INDEX IF NOT EXISTS idx_samples_session ON samples(session_id, observed_at);
+
+-- La selección del usuario es el único dato NO reconstruible del sistema:
+-- no se puede adivinar desde los logs. Por eso ni `DROP` ni `reset()` la tocan.
+CREATE TABLE IF NOT EXISTS watched_projects (
+    posicion INTEGER PRIMARY KEY,
+    path     TEXT NOT NULL
+);
 "#;
 
 impl Store {
@@ -87,6 +94,10 @@ impl Store {
     }
 
     fn preparar(conn: &Connection) -> Result<(), StoreError> {
+        // El hilo de sondeo y la GUI abren conexiones distintas al mismo
+        // archivo; sin esto, una escritura concurrente da SQLITE_BUSY al vuelo.
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
 
         if version != SCHEMA_VERSION {
@@ -221,6 +232,29 @@ impl Store {
         })?;
 
         rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::from)
+    }
+
+    /// Reemplaza la selección completa. Guardar una lista vacía es una
+    /// elección legítima del usuario y se persiste como tal.
+    pub fn save_watched(&self, projects: &[PathBuf]) -> Result<(), StoreError> {
+        self.conn.execute("DELETE FROM watched_projects", [])?;
+        for (i, p) in projects.iter().enumerate() {
+            self.conn.execute(
+                "INSERT INTO watched_projects (posicion, path) VALUES (?1, ?2)",
+                params![i as i64, p.to_string_lossy()],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn watched(&self) -> Result<Vec<PathBuf>, StoreError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT path FROM watched_projects ORDER BY posicion")?;
+        let filas = stmt.query_map([], |r| Ok(PathBuf::from(r.get::<_, String>(0)?)))?;
+        filas
+            .collect::<Result<Vec<_>, _>>()
             .map_err(StoreError::from)
     }
 
@@ -385,6 +419,60 @@ mod tests {
             .upsert_snapshot(&[fila("s2", AgentState::Waiting)])
             .expect("reingerir");
         assert_eq!(store.current().expect("leer").len(), 1);
+    }
+
+    #[test]
+    fn guarda_y_recupera_los_proyectos_vigilados() {
+        let store = Store::in_memory().expect("abrir");
+        let elegidos = vec![PathBuf::from("/p/orion"), PathBuf::from("/p/lab")];
+
+        store.save_watched(&elegidos).expect("guardar");
+        assert_eq!(store.watched().expect("leer"), elegidos);
+    }
+
+    #[test]
+    fn guardar_reemplaza_la_seleccion_anterior_en_vez_de_acumular() {
+        let store = Store::in_memory().expect("abrir");
+        store.save_watched(&[PathBuf::from("/p/a")]).expect("1");
+        store.save_watched(&[PathBuf::from("/p/b")]).expect("2");
+
+        assert_eq!(store.watched().expect("leer"), vec![PathBuf::from("/p/b")]);
+    }
+
+    /// Review Focus #2: deseleccionar todo es una elección válida y debe
+    /// persistir como tal, no revertir a la selección anterior.
+    #[test]
+    fn una_seleccion_vacia_se_guarda_como_vacia() {
+        let store = Store::in_memory().expect("abrir");
+        store.save_watched(&[PathBuf::from("/p/a")]).expect("1");
+        store.save_watched(&[]).expect("vaciar");
+
+        assert!(store.watched().expect("leer").is_empty());
+    }
+
+    /// La selección es el único dato no reconstruible: el reindexado, que
+    /// tira y rehace todo lo derivado, no debe llevársela por delante.
+    #[test]
+    fn el_reindexado_no_borra_la_seleccion() {
+        let store = Store::in_memory().expect("abrir");
+        store
+            .save_watched(&[PathBuf::from("/p/orion")])
+            .expect("guardar");
+        store
+            .upsert_snapshot(&[fila("s1", AgentState::Working)])
+            .expect("sesión");
+
+        store.reset().expect("reset");
+
+        assert!(
+            store.current().expect("leer").is_empty(),
+            "lo derivado sí se va"
+        );
+        assert_eq!(
+            store.watched().expect("leer"),
+            vec![PathBuf::from("/p/orion")],
+            "la selección sobrevive"
+        );
     }
 
     /// La base es un índice derivado (spec §7), así que al cambiar el esquema
