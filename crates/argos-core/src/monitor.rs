@@ -81,6 +81,12 @@ impl Monitor {
     }
 
     pub fn poll(&self) -> Snapshot {
+        self.poll_con_alcance(&self.config.scope.clone())
+    }
+
+    /// El alcance entra por parámetro para que el hilo de sondeo pueda
+    /// cambiarlo sin reconstruir el monitor.
+    pub fn poll_con_alcance(&self, scope: &Scope) -> Snapshot {
         let procs = self.process_probe.observe().unwrap_or_default();
 
         let mut worktrees: Vec<Worktree> = Vec::new();
@@ -98,7 +104,7 @@ impl Monitor {
             &worktrees,
             Utc::now(),
             self.config.idle_threshold,
-            &self.config.scope,
+            scope,
         );
 
         let mut snapshot = snapshot;

@@ -9,3 +9,4 @@ pub mod probes;
 pub mod scope;
 pub mod state_engine;
 pub mod store;
+pub mod watcher;
