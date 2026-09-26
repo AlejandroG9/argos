@@ -151,6 +151,26 @@ fn field(value: &Value, key: &str) -> u64 {
     value.get(key).and_then(Value::as_u64).unwrap_or(0)
 }
 
+/// Claude Code nombra el directorio de un proyecto sustituyendo `/` por `-`.
+/// Codificar es determinista; decodificar no lo es, porque un guion del
+/// nombre real es indistinguible del separador.
+pub fn slug_de_proyecto(project: &Path) -> String {
+    project.to_string_lossy().replace('/', "-")
+}
+
+/// Prefiltro barato: decide si vale la pena mirar dentro de un directorio.
+/// Puede dejar pasar de más —se confirma luego con el `cwd` del archivo—,
+/// pero nunca debe descartar de menos.
+pub fn slug_en_alcance(nombre_dir: &str, scope: &Scope) -> bool {
+    match scope {
+        Scope::All => true,
+        Scope::Projects(roots) => roots.iter().any(|r| {
+            let slug = slug_de_proyecto(r);
+            nombre_dir == slug || nombre_dir.starts_with(&format!("{slug}-"))
+        }),
+    }
+}
+
 pub struct ClaudeProbe {
     root: PathBuf,
 }
@@ -184,28 +204,45 @@ impl SessionProbe for ClaudeProbe {
 
         let mut sessions = Vec::new();
 
-        for entry in walkdir::WalkDir::new(&self.root)
-            .into_iter()
-            .filter_map(Result::ok)
-        {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+        let Ok(proyectos) = std::fs::read_dir(&self.root) else {
+            return Ok(sessions);
+        };
+
+        for entrada in proyectos.filter_map(Result::ok) {
+            let dir = entrada.path();
+            let Some(nombre) = dir.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            // Aquí se descartan cientos de megas sin abrir un solo archivo.
+            if !slug_en_alcance(nombre, scope) {
                 continue;
             }
-            let Some(identity) = identity_from_path(path) else {
-                continue;
-            };
-            let Ok(contents) = std::fs::read_to_string(path) else {
-                continue;
-            };
-            if let Some(observation) =
-                parse_session(&contents, path, identity.id, identity.parent_id)
+
+            for entry in walkdir::WalkDir::new(&dir)
+                .into_iter()
+                .filter_map(Result::ok)
             {
-                sessions.push(observation);
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                    continue;
+                }
+                let Some(identity) = identity_from_path(path) else {
+                    continue;
+                };
+                let Ok(contents) = std::fs::read_to_string(path) else {
+                    continue;
+                };
+                if let Some(observation) =
+                    parse_session(&contents, path, identity.id, identity.parent_id)
+                    && scope.contains(&observation.anchor_path)
+                {
+                    // El prefiltro pudo dejar pasar un hermano con nombre
+                    // prefijo; el cwd del archivo es la palabra final.
+                    sessions.push(observation);
+                }
             }
         }
 
-        sessions.retain(|s| scope.contains(&s.anchor_path));
         Ok(sessions)
     }
 }
@@ -326,6 +363,54 @@ mod tests {
         assert_eq!(identidad.parent_id, None);
     }
 
+    #[test]
+    fn la_ruta_del_proyecto_se_codifica_como_el_nombre_del_directorio() {
+        assert_eq!(
+            slug_de_proyecto(Path::new("/Users/alex/Proyectos/Orion")),
+            "-Users-alex-Proyectos-Orion"
+        );
+    }
+
+    #[test]
+    fn el_directorio_del_proyecto_y_los_de_sus_worktrees_estan_en_alcance() {
+        let scope = Scope::projects(vec![PathBuf::from("/Users/alex/Proyectos/Orion")]);
+
+        assert!(slug_en_alcance("-Users-alex-Proyectos-Orion", &scope));
+        assert!(slug_en_alcance(
+            "-Users-alex-Proyectos-Orion--worktrees-adam-slm",
+            &scope
+        ));
+    }
+
+    #[test]
+    fn un_directorio_de_otro_proyecto_se_descarta() {
+        let scope = Scope::projects(vec![PathBuf::from("/Users/alex/Proyectos/Orion")]);
+        assert!(!slug_en_alcance(
+            "-Users-alex-Proyectos-Laboratorio",
+            &scope
+        ));
+    }
+
+    /// Review Focus #1: el prefiltro deja pasar al hermano con nombre prefijo
+    /// —no puede distinguirlo sin leer— y la confirmación exacta la hace el
+    /// `cwd` del archivo. Lo que NO puede hacer es descartarlo de menos.
+    #[test]
+    fn el_prefiltro_prefiere_un_falso_positivo_antes_que_perder_una_sesion() {
+        let scope = Scope::projects(vec![PathBuf::from("/Users/alex/Proyectos/Orion")]);
+
+        assert!(
+            slug_en_alcance("-Users-alex-Proyectos-Orion-old", &scope),
+            "no puede distinguirlo sin leer: pasa y se confirma con el cwd"
+        );
+
+        assert!(!scope.contains(Path::new("/Users/alex/Proyectos/Orion-old")));
+    }
+
+    #[test]
+    fn con_alcance_total_todo_directorio_pasa() {
+        assert!(slug_en_alcance("-lo-que-sea", &Scope::all()));
+    }
+
     /// Se salta si la máquina no tiene Claude Code instalado.
     #[test]
     fn lee_las_sesiones_reales_de_la_maquina() {
@@ -335,10 +420,24 @@ mod tests {
         }
 
         let probe = ClaudeProbe::new(root);
-        let sesiones = probe.observe(&Scope::all()).expect("debe recolectar");
+
+        // Acotado a un solo proyecto: el prefiltro debe descartar el resto de
+        // los directorios sin abrirlos, que es el objetivo de esta tarea.
+        let solo_argos = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .expect("la raíz del repo")
+            .to_path_buf();
+        let scope = Scope::projects(vec![solo_argos.clone()]);
+        let sesiones = probe.observe(&scope).expect("debe recolectar");
 
         for s in &sesiones {
             assert!(s.anchor_path.is_absolute(), "ancla relativa: {s:?}");
+            assert!(
+                scope.contains(&s.anchor_path),
+                "fuera de alcance: {:?}",
+                s.anchor_path
+            );
         }
     }
 }
