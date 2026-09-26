@@ -30,6 +30,8 @@ de terminal una por una.
   el diseño reserva la costura, pero v1 es de solo lectura.
 - Grafos de nodos, animaciones o timelines. Ver §8.
 - Monitoreo remoto o multi-máquina. Todo es local.
+- Reanudar sesiones desde Argos. Investigado y documentado en §14; la variante de solo
+  lectura (copiar el comando) cabría en el alcance actual, la de lanzar la sesión no.
 - Pestañas por proyecto y desprendimiento a ventana propia. Acordado con el usuario para
   una fase posterior, después de §13: construirlas sobre un sondeo que congela la ventana
   multiplicaría el problema por pestaña en vez de resolverlo.
@@ -330,3 +332,36 @@ eso vive en su propia tabla que el reindexado no toca.
 Con varios proyectos seleccionados, la vista los agrupa por proyecto → rama → agente →
 subagente, que es la jerarquía que §6 ya definía. El selector de proyecto de la iteración
 anterior queda absorbido por esta pantalla de entrada.
+
+## 14. Hallazgo documentado: reanudar sesiones
+
+No implementado. Se documenta porque la investigación ya está hecha y porque Argos, sin
+saberlo, ya guarda todo lo que haría falta.
+
+### Lo verificado
+
+Los comandos se comprobaron contra la ayuda de cada CLI instalado el 2026-09-26:
+
+| Cliente | Cómo se reanuda | Qué necesita | ¿Argos lo tiene? |
+|---|---|---|---|
+| Claude Code | `claude --resume <session-id>` (o `-c` para la más reciente) | el id de sesión | sí: `SessionRow.id` es el nombre del `.jsonl` |
+| Codex | `codex resume <SESSION_ID>` (o `--last`) | el id de sesión | sí: sale de `session_meta.payload.session_id` |
+| Gemini | `gemini --session-file <ruta>` (o `--resume latest`) | la ruta del archivo | sí: `SessionObservation.source_path` |
+| Antigravity (`agy`) | **no expone nada** para reanudar | — | no aplica |
+
+El dato clave: los identificadores que piden esos comandos son exactamente los que el
+correlator ya extrae para poder distinguir sesiones. No haría falta recolectar nada nuevo.
+
+### Las dos formas de hacerlo, y en qué se diferencian
+
+**Copiar el comando al portapapeles.** Argos arma la línea correcta según la plataforma y
+el usuario la pega donde quiera. Mantiene intacta la regla de solo lectura de §1 y no
+decide por el usuario dónde se abre la sesión.
+
+**Lanzarla directamente**, abriendo una pane nueva en Warp con la sesión reanudada. Más
+útil, pero cruza de *observar* a *controlar*, que §1 reserva para una fase posterior, y
+obliga a decidir dónde se abre la sesión nueva — algo que el usuario puede querer resolver
+distinto según el caso.
+
+La primera es compatible con el alcance actual; la segunda pertenece a la misma fase que
+responder, pausar y matar agentes.
