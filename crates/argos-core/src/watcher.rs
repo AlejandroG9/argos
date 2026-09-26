@@ -1,6 +1,5 @@
 use crate::monitor::{Monitor, MonitorConfig, Snapshot};
 use crate::scope::Scope;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -103,6 +102,7 @@ impl Drop for Watcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use std::time::Duration;
 
     fn config_sin_alcance() -> MonitorConfig {
