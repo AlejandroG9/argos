@@ -1,3 +1,4 @@
+pub mod correlator;
 pub mod discovery;
 pub mod error;
 pub mod model;
