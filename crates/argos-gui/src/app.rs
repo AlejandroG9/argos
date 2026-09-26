@@ -79,10 +79,9 @@ impl ArgosApp {
             .map(|p| p.path.clone())
             .collect();
 
-        let pantalla = if seleccion.is_empty() {
-            Pantalla::Selector
-        } else {
-            Pantalla::Monitoreo
+        let (pantalla, abierto) = match seleccion.first() {
+            None => (Pantalla::Selector, None),
+            Some(p) => (Pantalla::Monitoreo, Some(Some(p.clone()))),
         };
 
         let config = MonitorConfig {
@@ -98,52 +97,43 @@ impl ArgosApp {
             disponibles,
             selected: None,
             filter: Filter::default(),
-            abierto: None,
+            abierto,
         }
     }
 
-    fn aplicar_seleccion(&mut self) {
-        let seleccion: Vec<PathBuf> = self
-            .disponibles
-            .iter()
-            .filter(|p| p.seleccionado)
-            .map(|p| p.path.clone())
-            .collect();
-
+    /// Un clic basta: abre el proyecto y lo recuerda para la próxima vez.
+    fn abrir_proyecto(&mut self, path: PathBuf) {
         if let Some(store) = &self.store {
-            let _ = store.save_watched(&seleccion);
+            let _ = store.save_watched(std::slice::from_ref(&path));
         }
 
-        self.watcher.set_scope(Scope::projects(seleccion));
-        self.abierto = None;
+        self.watcher.set_scope(Scope::projects(vec![path.clone()]));
+        // Directo a sus ramas: pasar por una lista de un solo proyecto sobra.
+        self.abierto = Some(Some(path));
         self.selected = None;
         self.pantalla = Pantalla::Monitoreo;
     }
 
     fn pintar_selector(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("¿Qué proyectos quieres monitorear?");
-            ui.weak("Argos solo leerá los logs de los proyectos que elijas.");
+            ui.heading("¿Qué proyecto quieres monitorear?");
+            ui.weak("Elige uno y Argos leerá solo sus logs.");
             ui.separator();
+
+            let mut abrir: Option<PathBuf> = None;
 
             egui::ScrollArea::vertical().show(ui, |ui| {
-                for p in &mut self.disponibles {
-                    ui.checkbox(&mut p.seleccionado, &p.nombre);
+                for p in &self.disponibles {
+                    if ui.selectable_label(false, &p.nombre).clicked() {
+                        abrir = Some(p.path.clone());
+                    }
                 }
             });
 
-            ui.separator();
-            let elegidos = self.disponibles.iter().filter(|p| p.seleccionado).count();
-
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(elegidos > 0, egui::Button::new("Monitorear"))
-                    .clicked()
-                {
-                    self.aplicar_seleccion();
-                }
-                ui.weak(format!("{elegidos} seleccionado(s)"));
-            });
+            // Fuera del recorrido: dentro habría un préstamo vivo de la lista.
+            if let Some(path) = abrir {
+                self.abrir_proyecto(path);
+            }
         });
     }
 
