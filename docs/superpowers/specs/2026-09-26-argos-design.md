@@ -30,6 +30,9 @@ de terminal una por una.
   el diseño reserva la costura, pero v1 es de solo lectura.
 - Grafos de nodos, animaciones o timelines. Ver §8.
 - Monitoreo remoto o multi-máquina. Todo es local.
+- Pestañas por proyecto y desprendimiento a ventana propia. Acordado con el usuario para
+  una fase posterior, después de §13: construirlas sobre un sondeo que congela la ventana
+  multiplicaría el problema por pestaña en vez de resolverlo.
 
 ### Criterios de éxito
 
@@ -267,3 +270,63 @@ plataforma cambia su esquema, un test falla e indica exactamente cuál y por qu�
   existen en disco.
 - **Correlación proceso ↔ sesión por descriptor de archivo.** Verificado como inviable:
   los CLIs no mantienen los archivos abiertos.
+
+## 13. Revisión: alcance por proyecto y rendimiento
+
+Aprobada el 2026-09-26, después de ejecutar v1 contra datos reales. Supersede lo que
+contradiga de las secciones anteriores.
+
+### El problema medido
+
+Un ciclo de sondeo tarda **1.65 s** y corre **en el hilo de la interfaz**, cada 3 s: la
+ventana queda congelada aproximadamente la mitad del tiempo. Cada ciclo lee **728 MB en
+445 archivos** —uno de ellos de 14 MB— y los vuelve a parsear enteros aunque no hayan
+cambiado.
+
+El diseño original asumía que vigilar la máquina entera era gratis. No lo es, y el costo
+crece con el historial del usuario, así que optimizar sin cambiar el modelo solo aplaza
+el problema.
+
+### El cambio de modelo
+
+**Argos deja de vigilar toda la máquina y vigila solo los proyectos que el usuario
+elige.** Esto resuelve el rendimiento por diseño, no por optimización: el trabajo por
+ciclo pasa a ser proporcional a lo que el usuario mira, no a lo que tiene en disco.
+
+Cuatro piezas:
+
+**Selector de proyectos como pantalla de entrada.** Lista los repositorios git
+encontrados bajo las raíces de búsqueda, con selección múltiple. No parsea ni un solo
+archivo de sesión: solo recorre directorios y consulta git, así que abre al instante y
+muestra todos los proyectos, tengan o no agentes corriendo.
+
+**El alcance viaja hasta los probes.** `SessionProbe::observe` recibe el conjunto de
+proyectos a vigilar, y cada probe lo aplica **lo antes que su formato permita**, no
+filtrando al final. Claude Code codifica la ruta en el nombre del directorio
+(`-Users-alex-Proyectos-Orion`), así que descarta directorios enteros sin abrir un
+archivo; Gemini se decide por `.project_root`; Codex necesita leer solo la primera línea
+de cada sesión (`session_meta.cwd`) en vez del archivo completo; Antigravity lee su
+historial global, que es pequeño. Este es el cambio de interfaz que hace arquitectónica
+la revisión.
+
+**El sondeo sale del hilo de la interfaz.** Corre en un hilo aparte y la UI lee el último
+resultado disponible. Esto es lo que garantiza que la ventana responda pase lo que pase,
+incluso con un proyecto de logs pesados: sin esto, cualquier proyecto grande volvería a
+congelarla.
+
+**Caché de parseo por archivo.** Con llave `(ruta, mtime, tamaño)`: un archivo que no
+cambió no se vuelve a parsear. Dentro de un proyecto grande es la diferencia entre releer
+cien megas o unos kilobytes.
+
+### Persistencia de la selección
+
+La selección del usuario se guarda y Argos arranca monitoreando esos proyectos, con una
+vía de regreso al selector. Se guarda junto al resto del estado; como todo lo demás en
+SQLite es derivado y reconstruible, la selección es el primer dato que **no** lo es, y por
+eso vive en su propia tabla que el reindexado no toca.
+
+### Consecuencia sobre la vista
+
+Con varios proyectos seleccionados, la vista los agrupa por proyecto → rama → agente →
+subagente, que es la jerarquía que §6 ya definía. El selector de proyecto de la iteración
+anterior queda absorbido por esta pantalla de entrada.
