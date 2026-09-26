@@ -5,5 +5,6 @@ pub mod model;
 pub mod monitor;
 pub mod observation;
 pub mod probes;
+pub mod scope;
 pub mod state_engine;
 pub mod store;

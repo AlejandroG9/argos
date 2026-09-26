@@ -2,6 +2,7 @@ use crate::error::ProbeError;
 use crate::model::{ClientKind, SessionId, TokenMetrics};
 use crate::observation::{ActivitySemantics, Capabilities, SessionObservation};
 use crate::probes::SessionProbe;
+use crate::scope::Scope;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -173,7 +174,10 @@ impl SessionProbe for ClaudeProbe {
         Capabilities::full()
     }
 
-    fn observe(&self) -> Result<Vec<SessionObservation>, ProbeError> {
+    fn observe(&self, scope: &Scope) -> Result<Vec<SessionObservation>, ProbeError> {
+        if scope.is_empty() {
+            return Ok(Vec::new());
+        }
         if !self.root.exists() {
             return Err(ProbeError::SourceMissing(self.root.clone()));
         }
@@ -201,6 +205,7 @@ impl SessionProbe for ClaudeProbe {
             }
         }
 
+        sessions.retain(|s| scope.contains(&s.anchor_path));
         Ok(sessions)
     }
 }
@@ -330,7 +335,7 @@ mod tests {
         }
 
         let probe = ClaudeProbe::new(root);
-        let sesiones = probe.observe().expect("debe recolectar");
+        let sesiones = probe.observe(&Scope::all()).expect("debe recolectar");
 
         for s in &sesiones {
             assert!(s.anchor_path.is_absolute(), "ancla relativa: {s:?}");

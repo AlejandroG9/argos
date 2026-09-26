@@ -2,6 +2,7 @@ use crate::error::ProbeError;
 use crate::model::ClientKind;
 use crate::observation::{ActivitySemantics, Capabilities, SessionObservation};
 use crate::probes::SessionProbe;
+use crate::scope::Scope;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -82,7 +83,10 @@ impl SessionProbe for AntigravityProbe {
         Capabilities::minimal()
     }
 
-    fn observe(&self) -> Result<Vec<SessionObservation>, ProbeError> {
+    fn observe(&self, scope: &Scope) -> Result<Vec<SessionObservation>, ProbeError> {
+        if scope.is_empty() {
+            return Ok(Vec::new());
+        }
         if !self.history.exists() {
             return Err(ProbeError::SourceMissing(self.history.clone()));
         }
@@ -92,7 +96,9 @@ impl SessionProbe for AntigravityProbe {
             source,
         })?;
 
-        Ok(parse_history(&contents, &self.history))
+        let mut sessions = parse_history(&contents, &self.history);
+        sessions.retain(|s| scope.contains(&s.anchor_path));
+        Ok(sessions)
     }
 }
 

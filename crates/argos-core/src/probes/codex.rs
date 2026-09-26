@@ -2,6 +2,7 @@ use crate::error::ProbeError;
 use crate::model::ClientKind;
 use crate::observation::{ActivitySemantics, Capabilities, SessionObservation};
 use crate::probes::SessionProbe;
+use crate::scope::Scope;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::collections::HashSet;
@@ -111,7 +112,10 @@ impl SessionProbe for CodexProbe {
         }
     }
 
-    fn observe(&self) -> Result<Vec<SessionObservation>, ProbeError> {
+    fn observe(&self, scope: &Scope) -> Result<Vec<SessionObservation>, ProbeError> {
+        if scope.is_empty() {
+            return Ok(Vec::new());
+        }
         if !self.root.exists() {
             return Err(ProbeError::SourceMissing(self.root.clone()));
         }
@@ -134,6 +138,7 @@ impl SessionProbe for CodexProbe {
             }
         }
 
+        sessions.retain(|s| scope.contains(&s.anchor_path));
         Ok(sessions)
     }
 }

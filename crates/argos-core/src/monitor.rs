@@ -8,6 +8,7 @@ use crate::probes::claude::ClaudeProbe;
 use crate::probes::codex::CodexProbe;
 use crate::probes::gemini::GeminiProbe;
 use crate::probes::process::ProcessProbe;
+use crate::scope::Scope;
 use crate::state_engine::{DEFAULT_IDLE_THRESHOLD, infer};
 use crate::store::{SessionRow, Store, StoreError};
 use chrono::{DateTime, Duration, Utc};
@@ -30,6 +31,10 @@ pub struct MonitorConfig {
     pub max_depth: usize,
     pub idle_threshold: Duration,
     pub db_path: PathBuf,
+    /// Qué proyectos vigilar. `argos-probe` usa alcance total a propósito
+    /// para seguir sirviendo de diagnóstico completo; la GUI construye el suyo
+    /// a partir de lo que el usuario eligió.
+    pub scope: Scope,
 }
 
 impl Default for MonitorConfig {
@@ -40,6 +45,7 @@ impl Default for MonitorConfig {
             max_depth: 3,
             idle_threshold: DEFAULT_IDLE_THRESHOLD,
             db_path: home.join(".argos/argos.db"),
+            scope: Scope::all(),
         }
     }
 }
@@ -92,6 +98,7 @@ impl Monitor {
             &worktrees,
             Utc::now(),
             self.config.idle_threshold,
+            &self.config.scope,
         );
 
         let mut snapshot = snapshot;
@@ -129,12 +136,13 @@ pub fn collect(
     worktrees: &[Worktree],
     now: DateTime<Utc>,
     idle_threshold: Duration,
+    scope: &Scope,
 ) -> Snapshot {
     let mut sessions = Vec::new();
     let mut degraded = Vec::new();
 
     for probe in probes {
-        match probe.observe() {
+        match probe.observe(scope) {
             Ok(mut found) => sessions.append(&mut found),
             // Un probe caído degrada su plataforma y nada más.
             Err(err) => degraded.push((probe.client(), err.to_string())),
@@ -210,7 +218,7 @@ mod tests {
         fn capabilities(&self) -> Capabilities {
             Capabilities::minimal()
         }
-        fn observe(&self) -> Result<Vec<SessionObservation>, ProbeError> {
+        fn observe(&self, _scope: &Scope) -> Result<Vec<SessionObservation>, ProbeError> {
             Err(ProbeError::SourceMissing(PathBuf::from("/no/existe")))
         }
     }
@@ -224,7 +232,7 @@ mod tests {
         fn capabilities(&self) -> Capabilities {
             Capabilities::full()
         }
-        fn observe(&self) -> Result<Vec<SessionObservation>, ProbeError> {
+        fn observe(&self, _scope: &Scope) -> Result<Vec<SessionObservation>, ProbeError> {
             Ok(vec![SessionObservation {
                 id: "s1".into(),
                 client: ClientKind::ClaudeCode,
@@ -246,7 +254,14 @@ mod tests {
         let probes: Vec<Box<dyn SessionProbe>> =
             vec![Box::new(ProbeQueFalla), Box::new(ProbeQueFunciona)];
 
-        let snapshot = collect(&probes, &[], &[], Utc::now(), DEFAULT_IDLE_THRESHOLD);
+        let snapshot = collect(
+            &probes,
+            &[],
+            &[],
+            Utc::now(),
+            DEFAULT_IDLE_THRESHOLD,
+            &Scope::all(),
+        );
 
         assert_eq!(
             snapshot.rows.len(),
@@ -266,7 +281,14 @@ mod tests {
         use crate::model::AgentState;
 
         let probes: Vec<Box<dyn SessionProbe>> = vec![Box::new(ProbeQueFunciona)];
-        let snapshot = collect(&probes, &[], &[], Utc::now(), DEFAULT_IDLE_THRESHOLD);
+        let snapshot = collect(
+            &probes,
+            &[],
+            &[],
+            Utc::now(),
+            DEFAULT_IDLE_THRESHOLD,
+            &Scope::all(),
+        );
 
         // Sin proceso vivo, la única sesión termina.
         assert_eq!(snapshot.rows[0].state, AgentState::Finished);
@@ -292,7 +314,7 @@ mod tests {
             fn capabilities(&self) -> Capabilities {
                 Capabilities::full()
             }
-            fn observe(&self) -> Result<Vec<SessionObservation>, ProbeError> {
+            fn observe(&self, _scope: &Scope) -> Result<Vec<SessionObservation>, ProbeError> {
                 Ok(vec![SessionObservation {
                     id: "huerfana".into(),
                     client: ClientKind::ClaudeCode,
@@ -315,7 +337,14 @@ mod tests {
         }];
         let probes: Vec<Box<dyn SessionProbe>> = vec![Box::new(ProbeHuerfano(borrado))];
 
-        let snapshot = collect(&probes, &[], &worktrees, Utc::now(), DEFAULT_IDLE_THRESHOLD);
+        let snapshot = collect(
+            &probes,
+            &[],
+            &worktrees,
+            Utc::now(),
+            DEFAULT_IDLE_THRESHOLD,
+            &Scope::all(),
+        );
 
         assert_eq!(snapshot.rows.len(), 1, "la huérfana no debe desaparecer");
         assert_eq!(
@@ -341,7 +370,7 @@ mod tests {
             fn capabilities(&self) -> Capabilities {
                 Capabilities::full()
             }
-            fn observe(&self) -> Result<Vec<SessionObservation>, ProbeError> {
+            fn observe(&self, _scope: &Scope) -> Result<Vec<SessionObservation>, ProbeError> {
                 Ok(vec![SessionObservation {
                     id: "s".into(),
                     client: ClientKind::ClaudeCode,
@@ -364,7 +393,14 @@ mod tests {
         }];
         let probes: Vec<Box<dyn SessionProbe>> = vec![Box::new(P(wt.clone()))];
 
-        let snapshot = collect(&probes, &[], &worktrees, Utc::now(), DEFAULT_IDLE_THRESHOLD);
+        let snapshot = collect(
+            &probes,
+            &[],
+            &worktrees,
+            Utc::now(),
+            DEFAULT_IDLE_THRESHOLD,
+            &Scope::all(),
+        );
 
         assert_eq!(
             snapshot.rows[0].project,
@@ -378,6 +414,48 @@ mod tests {
         );
     }
 
+    /// El alcance tiene que llegar hasta el probe, no filtrarse después: si
+    /// el probe no lo ve, no puede evitar leer lo que no interesa.
+    #[test]
+    fn el_alcance_llega_hasta_el_probe() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct Espia(Arc<AtomicUsize>);
+
+        impl SessionProbe for Espia {
+            fn client(&self) -> ClientKind {
+                ClientKind::ClaudeCode
+            }
+            fn capabilities(&self) -> Capabilities {
+                Capabilities::full()
+            }
+            fn observe(&self, scope: &Scope) -> Result<Vec<SessionObservation>, ProbeError> {
+                self.0.store(scope.roots().len(), Ordering::Relaxed);
+                Ok(Vec::new())
+            }
+        }
+
+        let visto = Arc::new(AtomicUsize::new(0));
+        let probes: Vec<Box<dyn SessionProbe>> = vec![Box::new(Espia(visto.clone()))];
+        let scope = Scope::projects(vec![PathBuf::from("/p/a"), PathBuf::from("/p/b")]);
+
+        collect(
+            &probes,
+            &[],
+            &[],
+            Utc::now(),
+            DEFAULT_IDLE_THRESHOLD,
+            &scope,
+        );
+
+        assert_eq!(
+            visto.load(Ordering::Relaxed),
+            2,
+            "el probe debe ver el alcance"
+        );
+    }
+
     /// El spec §7 exige que lo observado se persista desde el inicio.
     #[test]
     fn el_ciclo_persiste_el_snapshot_y_acumula_muestras() {
@@ -386,7 +464,14 @@ mod tests {
         let store = Store::in_memory().expect("abrir");
         let probes: Vec<Box<dyn SessionProbe>> = vec![Box::new(ProbeQueFunciona)];
 
-        let snapshot = collect(&probes, &[], &[], Utc::now(), DEFAULT_IDLE_THRESHOLD);
+        let snapshot = collect(
+            &probes,
+            &[],
+            &[],
+            Utc::now(),
+            DEFAULT_IDLE_THRESHOLD,
+            &Scope::all(),
+        );
         persist(&store, &snapshot).expect("persistir");
         persist(&store, &snapshot).expect("persistir de nuevo");
 
