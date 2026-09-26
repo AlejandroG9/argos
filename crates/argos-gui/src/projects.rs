@@ -1,6 +1,8 @@
 use crate::app::Filter;
+use crate::ventana::Ventana;
 use argos_core::model::AgentState;
 use argos_core::store::SessionRow;
+use chrono::{DateTime, Utc};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -31,10 +33,18 @@ pub fn nombre_de_proyecto(project: Option<&PathBuf>) -> String {
 /// Los proyectos se ordenan por urgencia y no alfabéticamente: uno con un
 /// agente esperándote va arriba de uno que solo tiene trabajo en curso. El
 /// nombre desempata para que la lista no baile entre refrescos.
-pub fn summarize_projects(rows: &[SessionRow], filter: Filter) -> Vec<ProjectSummary> {
+pub fn summarize_projects(
+    rows: &[SessionRow],
+    filter: Filter,
+    ventana: Ventana,
+    now: DateTime<Utc>,
+) -> Vec<ProjectSummary> {
     let mut por_proyecto: BTreeMap<Option<PathBuf>, Vec<&SessionRow>> = BTreeMap::new();
 
-    for row in rows.iter().filter(|r| filter.acepta(r.state)) {
+    for row in rows
+        .iter()
+        .filter(|r| filter.acepta(r.state) && ventana.acepta(r.last_activity, now))
+    {
         por_proyecto
             .entry(row.project.clone())
             .or_default()
@@ -77,7 +87,6 @@ pub fn summarize_projects(rows: &[SessionRow], filter: Filter) -> Vec<ProjectSum
 mod tests {
     use super::*;
     use argos_core::model::{ClientKind, Confidence};
-    use chrono::Utc;
 
     fn fila(proyecto: Option<&str>, state: AgentState) -> SessionRow {
         SessionRow {
@@ -114,7 +123,12 @@ mod tests {
 
     #[test]
     fn una_sesion_fuera_de_todo_repo_cae_en_su_propio_grupo() {
-        let resumen = summarize_projects(&[fila(None, AgentState::Working)], Filter::All);
+        let resumen = summarize_projects(
+            &[fila(None, AgentState::Working)],
+            Filter::All,
+            Ventana::Todo,
+            Utc::now(),
+        );
         assert_eq!(resumen.len(), 1);
         assert_eq!(resumen[0].nombre, "(sin proyecto)");
         assert_eq!(resumen[0].project, None);
@@ -128,10 +142,11 @@ mod tests {
             fila(Some("/p/mmm"), AgentState::Working),
         ];
 
-        let nombres: Vec<String> = summarize_projects(&rows, Filter::All)
-            .into_iter()
-            .map(|p| p.nombre)
-            .collect();
+        let nombres: Vec<String> =
+            summarize_projects(&rows, Filter::All, Ventana::Todo, Utc::now())
+                .into_iter()
+                .map(|p| p.nombre)
+                .collect();
 
         assert_eq!(nombres, vec!["zzz", "mmm", "aaa"]);
     }
@@ -145,7 +160,7 @@ mod tests {
             fila(Some("/p/orion"), AgentState::Finished),
         ];
 
-        let r = summarize_projects(&rows, Filter::All);
+        let r = summarize_projects(&rows, Filter::All, Ventana::Todo, Utc::now());
         assert_eq!(r[0].total, 4);
         assert_eq!(r[0].esperando, 2);
         assert_eq!(r[0].trabajando, 1);
@@ -161,7 +176,7 @@ mod tests {
             fila(Some("/p/dormido"), AgentState::Finished),
         ];
 
-        let r = summarize_projects(&rows, Filter::NeedsAttention);
+        let r = summarize_projects(&rows, Filter::NeedsAttention, Ventana::Todo, Utc::now());
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].nombre, "activo");
     }
@@ -174,7 +189,7 @@ mod tests {
             fila(Some("/p/orion"), AgentState::Finished),
         ];
 
-        let r = summarize_projects(&rows, Filter::Active);
+        let r = summarize_projects(&rows, Filter::Active, Ventana::Todo, Utc::now());
         assert_eq!(r[0].total, 1, "las terminadas no cuentan con este filtro");
     }
 }

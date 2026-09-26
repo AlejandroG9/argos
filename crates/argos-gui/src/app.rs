@@ -2,13 +2,14 @@ use crate::jump::jump_to;
 use crate::projects::{nombre_de_proyecto, summarize_projects};
 use crate::selector::{ProyectoDisponible, marcar_seleccion};
 use crate::theme::{confidence_hint, edad_legible, state_badge, state_label};
+use crate::ventana::Ventana;
 use argos_core::discovery::find_repos;
 use argos_core::model::AgentState;
 use argos_core::monitor::{MonitorConfig, Snapshot};
 use argos_core::scope::Scope;
 use argos_core::store::{SessionRow, Store};
 use argos_core::watcher::{EstadoSondeo, Watcher};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -50,6 +51,7 @@ pub struct ArgosApp {
     disponibles: Vec<ProyectoDisponible>,
     pub selected: Option<String>,
     pub filter: Filter,
+    pub ventana: Ventana,
     /// `None` = lista de proyectos vigilados. `Some` = dentro de ese proyecto.
     pub abierto: Option<Option<PathBuf>>,
 }
@@ -97,6 +99,7 @@ impl ArgosApp {
             disponibles,
             selected: None,
             filter: Filter::default(),
+            ventana: Ventana::default(),
             abierto,
         }
     }
@@ -178,11 +181,16 @@ impl Grupo {
 ///
 /// Devuelve filas propias, no referencias: el árbol muta la selección
 /// mientras itera, y un préstamo vivo durante el recorrido lo impediría.
-pub fn group_by_branch(rows: &[SessionRow], filter: Filter) -> Vec<Grupo> {
+pub fn group_by_branch(
+    rows: &[SessionRow],
+    filter: Filter,
+    ventana: Ventana,
+    now: DateTime<Utc>,
+) -> Vec<Grupo> {
     let mut por_rama: BTreeMap<String, Vec<SessionRow>> = BTreeMap::new();
 
     for row in rows {
-        if !filter.acepta(row.state) {
+        if !filter.acepta(row.state) || !ventana.acepta(row.last_activity, now) {
             continue;
         }
 
@@ -261,6 +269,14 @@ impl eframe::App for ArgosApp {
                     ui.selectable_value(&mut self.filter, Filter::Active, "Activas");
                 }
             });
+
+            if self.pantalla == Pantalla::Monitoreo {
+                ui.horizontal(|ui| {
+                    for v in [Ventana::Hoy, Ventana::Dias7, Ventana::Dias30, Ventana::Todo] {
+                        ui.selectable_value(&mut self.ventana, v, v.etiqueta());
+                    }
+                });
+            }
         });
 
         if self.pantalla == Pantalla::Selector {
@@ -336,7 +352,7 @@ impl ArgosApp {
     }
 
     fn pintar_proyectos(&mut self, ctx: &egui::Context, snapshot: &Snapshot) {
-        let resumen = summarize_projects(&snapshot.rows, self.filter);
+        let resumen = summarize_projects(&snapshot.rows, self.filter, self.ventana, Utc::now());
 
         egui::CentralPanel::default().show(ctx, |ui| {
             if resumen.is_empty() {
@@ -375,7 +391,7 @@ impl ArgosApp {
 
     fn pintar_ramas(&mut self, ctx: &egui::Context, project: Option<PathBuf>, snapshot: &Snapshot) {
         let filas = self.filas_del_proyecto(&project, snapshot);
-        let grupos = group_by_branch(&filas, self.filter);
+        let grupos = group_by_branch(&filas, self.filter, self.ventana, Utc::now());
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -466,7 +482,7 @@ mod tests {
             fila("mmm-trabajando", AgentState::Working),
         ];
 
-        let grupos = group_by_branch(&rows, Filter::All);
+        let grupos = group_by_branch(&rows, Filter::All, Ventana::Todo, Utc::now());
         let orden: Vec<&str> = grupos.iter().map(|g| g.rama.as_str()).collect();
 
         assert_eq!(
@@ -477,10 +493,20 @@ mod tests {
 
     #[test]
     fn un_grupo_con_alguien_esperando_reclama_atencion() {
-        let grupos = group_by_branch(&[fila("x", AgentState::Waiting)], Filter::All);
+        let grupos = group_by_branch(
+            &[fila("x", AgentState::Waiting)],
+            Filter::All,
+            Ventana::Todo,
+            Utc::now(),
+        );
         assert!(grupos[0].reclama_atencion());
 
-        let grupos = group_by_branch(&[fila("y", AgentState::Finished)], Filter::All);
+        let grupos = group_by_branch(
+            &[fila("y", AgentState::Finished)],
+            Filter::All,
+            Ventana::Todo,
+            Utc::now(),
+        );
         assert!(!grupos[0].reclama_atencion());
     }
 
@@ -492,7 +518,7 @@ mod tests {
             fila("c", AgentState::Finished),
         ];
 
-        let grupos = group_by_branch(&rows, Filter::NeedsAttention);
+        let grupos = group_by_branch(&rows, Filter::NeedsAttention, Ventana::Todo, Utc::now());
         assert_eq!(grupos.len(), 1);
         assert_eq!(grupos[0].rama, "a");
     }
@@ -504,7 +530,7 @@ mod tests {
             fila("aaa", AgentState::Working),
         ];
 
-        let grupos = group_by_branch(&rows, Filter::All);
+        let grupos = group_by_branch(&rows, Filter::All, Ventana::Todo, Utc::now());
         let orden: Vec<&str> = grupos.iter().map(|g| g.rama.as_str()).collect();
         assert_eq!(orden, vec!["aaa", "zzz"]);
     }

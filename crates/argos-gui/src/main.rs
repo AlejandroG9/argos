@@ -3,6 +3,7 @@ mod jump;
 mod projects;
 mod selector;
 mod theme;
+mod ventana;
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
