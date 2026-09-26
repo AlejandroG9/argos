@@ -34,10 +34,15 @@ pub fn correlate(
     }
 
     for ((client, anchor), mut grupo) in grupos {
+        // El cwd del proceso es donde el agente **arrancó**; el de la sesión,
+        // donde está trabajando. Un agente que hizo `cd` a un subdirectorio
+        // sigue siendo el mismo proceso, así que también valen los ancestros.
+        // Exigir igualdad exacta lo dejaba sin proceso, y sin proceso el motor
+        // lo declara terminado aunque esté ejecutando comandos.
         let en_grupo: Vec<&ProcessObservation> = procs
             .iter()
             .filter(|p| p.client == client)
-            .filter(|p| p.cwd.as_deref() == Some(anchor.as_path()))
+            .filter(|p| p.cwd.as_deref().is_some_and(|cwd| anchor.starts_with(cwd)))
             .collect();
 
         // Con un solo proceso y una sola sesión no hay nada que adivinar.
@@ -54,11 +59,17 @@ pub fn correlate(
 
             // Un proceso que arrancó después de la última actividad de la
             // sesión no puede haberla producido.
+            // Un candidato exacto gana a uno que solo es ancestro: es el que
+            // de verdad está en ese directorio. Entre iguales, el más cercano
+            // en el tiempo.
             let elegido = en_grupo
                 .iter()
                 .filter(|p| !usados.contains(&p.pid))
                 .filter(|p| p.started_at <= session.last_activity)
-                .min_by_key(|p| distancia(p.started_at, referencia))
+                .min_by_key(|p| {
+                    let exacto = p.cwd.as_deref() != Some(anchor.as_path());
+                    (exacto, distancia(p.started_at, referencia))
+                })
                 .map(|p| (*p).clone());
 
             if let Some(p) = &elegido {
@@ -239,6 +250,56 @@ mod tests {
             .unwrap();
 
         assert_eq!(subagente.process.as_ref().map(|p| p.pid), Some(100));
+    }
+
+    /// Caso real: un agente arranca en `~/Proyectos` y trabaja dentro de
+    /// `~/Proyectos/argos`. El cwd del proceso es donde arrancó; el de la
+    /// sesión, donde trabaja. Exigir igualdad exacta deja al agente sin
+    /// proceso, y sin proceso el motor concluye "terminó" — de un agente que
+    /// está ejecutando comandos ahora mismo.
+    #[test]
+    fn un_proceso_en_un_directorio_ancestro_empareja_con_la_sesion() {
+        let procs = vec![proceso(100, "/repo", 0)];
+        let sesiones = vec![sesion("s1", "/repo/sub/proyecto", 10, 20)];
+        let worktrees = vec![worktree("/repo/sub/proyecto", "main")];
+
+        let resultado = correlate(&procs, &sesiones, &worktrees);
+
+        assert_eq!(
+            resultado[0].process.as_ref().map(|p| p.pid),
+            Some(100),
+            "el proceso del padre es el que corre esta sesión"
+        );
+    }
+
+    #[test]
+    fn un_proceso_en_otra_rama_del_arbol_no_empareja() {
+        let procs = vec![proceso(100, "/otro/sitio", 0)];
+        let sesiones = vec![sesion("s1", "/repo", 10, 20)];
+        let worktrees = vec![worktree("/repo", "main")];
+
+        assert!(
+            correlate(&procs, &sesiones, &worktrees)[0]
+                .process
+                .is_none()
+        );
+    }
+
+    /// Con un candidato exacto y otro solo ancestro, gana el exacto: es el
+    /// que de verdad está en ese directorio.
+    #[test]
+    fn un_candidato_exacto_gana_a_uno_ancestro() {
+        let procs = vec![proceso(100, "/repo", 0), proceso(200, "/repo/sub", 1)];
+        let sesiones = vec![sesion("s1", "/repo/sub", 10, 20)];
+        let worktrees = vec![worktree("/repo/sub", "main")];
+
+        assert_eq!(
+            correlate(&procs, &sesiones, &worktrees)[0]
+                .process
+                .as_ref()
+                .map(|p| p.pid),
+            Some(200)
+        );
     }
 
     /// Review Focus #5: `git worktree remove` mientras la sesión sigue en disco.
