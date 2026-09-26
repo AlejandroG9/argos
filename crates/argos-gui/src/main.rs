@@ -1,6 +1,7 @@
 mod app;
 mod jump;
 mod projects;
+mod selector;
 mod theme;
 
 fn main() -> eframe::Result<()> {

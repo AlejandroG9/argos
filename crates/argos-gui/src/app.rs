@@ -1,13 +1,17 @@
 use crate::jump::jump_to;
 use crate::projects::{nombre_de_proyecto, summarize_projects};
+use crate::selector::{ProyectoDisponible, marcar_seleccion};
 use crate::theme::{confidence_hint, edad_legible, state_badge, state_label};
+use argos_core::discovery::find_repos;
 use argos_core::model::AgentState;
-use argos_core::monitor::{Monitor, MonitorConfig, Snapshot};
-use argos_core::store::SessionRow;
+use argos_core::monitor::{MonitorConfig, Snapshot};
+use argos_core::scope::Scope;
+use argos_core::store::{SessionRow, Store};
+use argos_core::watcher::{EstadoSondeo, Watcher};
 use chrono::Utc;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const REFRESH: Duration = Duration::from_secs(3);
 
@@ -32,40 +36,124 @@ impl Filter {
     }
 }
 
+#[derive(PartialEq, Clone, Copy)]
+pub enum Pantalla {
+    Selector,
+    Monitoreo,
+}
+
 pub struct ArgosApp {
-    monitor: Monitor,
-    snapshot: Snapshot,
-    last_poll: Instant,
+    watcher: Watcher,
+    store: Option<Store>,
+    snapshot: Option<Snapshot>,
+    pantalla: Pantalla,
+    disponibles: Vec<ProyectoDisponible>,
     pub selected: Option<String>,
     pub filter: Filter,
-    /// `None` = pantalla de proyectos. `Some` = dentro de ese proyecto.
+    /// `None` = lista de proyectos vigilados. `Some` = dentro de ese proyecto.
     pub abierto: Option<Option<PathBuf>>,
 }
 
 impl ArgosApp {
     pub fn new() -> Self {
-        let monitor = Monitor::new(MonitorConfig::default());
-        let snapshot = monitor.poll();
+        let config = MonitorConfig::default();
+        let store = Store::open(&config.db_path).ok();
+
+        // Una selección guardada que ya no existe en disco se ignora sola:
+        // `marcar_seleccion` solo lista lo que encontró.
+        let guardados = store
+            .as_ref()
+            .and_then(|s| s.watched().ok())
+            .unwrap_or_default();
+
+        let encontrados: Vec<PathBuf> = config
+            .search_roots
+            .iter()
+            .flat_map(|r| find_repos(r, config.max_depth))
+            .collect();
+        let disponibles = marcar_seleccion(encontrados, &guardados);
+
+        let seleccion: Vec<PathBuf> = disponibles
+            .iter()
+            .filter(|p| p.seleccionado)
+            .map(|p| p.path.clone())
+            .collect();
+
+        let pantalla = if seleccion.is_empty() {
+            Pantalla::Selector
+        } else {
+            Pantalla::Monitoreo
+        };
+
+        let config = MonitorConfig {
+            scope: Scope::projects(seleccion),
+            ..config
+        };
+
         ArgosApp {
-            monitor,
-            snapshot,
-            last_poll: Instant::now(),
+            watcher: Watcher::start(config, REFRESH),
+            store,
+            snapshot: None,
+            pantalla,
+            disponibles,
             selected: None,
             filter: Filter::default(),
             abierto: None,
         }
     }
 
-    fn refresh_if_due(&mut self) {
-        if self.last_poll.elapsed() >= REFRESH {
-            self.snapshot = self.monitor.poll();
-            self.last_poll = Instant::now();
+    fn aplicar_seleccion(&mut self) {
+        let seleccion: Vec<PathBuf> = self
+            .disponibles
+            .iter()
+            .filter(|p| p.seleccionado)
+            .map(|p| p.path.clone())
+            .collect();
+
+        if let Some(store) = &self.store {
+            let _ = store.save_watched(&seleccion);
         }
+
+        self.watcher.set_scope(Scope::projects(seleccion));
+        self.abierto = None;
+        self.selected = None;
+        self.pantalla = Pantalla::Monitoreo;
+    }
+
+    fn pintar_selector(&mut self, ctx: &egui::Context) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.heading("¿Qué proyectos quieres monitorear?");
+            ui.weak("Argos solo leerá los logs de los proyectos que elijas.");
+            ui.separator();
+
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for p in &mut self.disponibles {
+                    ui.checkbox(&mut p.seleccionado, &p.nombre);
+                }
+            });
+
+            ui.separator();
+            let elegidos = self.disponibles.iter().filter(|p| p.seleccionado).count();
+
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(elegidos > 0, egui::Button::new("Monitorear"))
+                    .clicked()
+                {
+                    self.aplicar_seleccion();
+                }
+                ui.weak(format!("{elegidos} seleccionado(s)"));
+            });
+        });
     }
 
     /// Solo las sesiones del proyecto abierto.
-    fn filas_del_proyecto(&self, project: &Option<PathBuf>) -> Vec<SessionRow> {
-        self.snapshot
+    fn filas_del_proyecto(
+        &self,
+        project: &Option<PathBuf>,
+        snapshot: &Snapshot,
+    ) -> Vec<SessionRow> {
+        snapshot
             .rows
             .iter()
             .filter(|r| &r.project == project)
@@ -138,90 +226,127 @@ impl Default for ArgosApp {
 
 impl eframe::App for ArgosApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.refresh_if_due();
+        // No bloquea: si el hilo aún no publicó nada, seguimos con lo último
+        // que teníamos. Aquí es donde la ventana deja de congelarse.
+        if let Some(s) = self.watcher.latest() {
+            self.snapshot = Some(s);
+        }
         ctx.request_repaint_after(REFRESH);
+
+        let sesiones = self.snapshot.as_ref().map(|s| s.rows.len()).unwrap_or(0);
 
         egui::TopBottomPanel::top("encabezado").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("Argos");
-                ui.label(format!("{} sesiones", self.snapshot.rows.len()));
-                if !self.snapshot.degraded.is_empty() {
+
+                if self.pantalla == Pantalla::Monitoreo {
+                    if ui.button("Proyectos").clicked() {
+                        self.pantalla = Pantalla::Selector;
+                    }
+                    ui.label(format!("{sesiones} sesiones"));
+                }
+
+                if self.watcher.estado() == EstadoSondeo::Detenido {
                     ui.colored_label(
-                        egui::Color32::from_rgb(200, 120, 60),
-                        format!(
-                            "{} plataforma(s) degradada(s)",
-                            self.snapshot.degraded.len()
-                        ),
+                        egui::Color32::from_rgb(210, 90, 90),
+                        "el sondeo se detuvo: los datos no se actualizan",
                     );
                 }
-                if let Some(err) = &self.snapshot.persist_error {
+
+                if let Some(err) = self
+                    .snapshot
+                    .as_ref()
+                    .and_then(|s| s.persist_error.as_ref())
+                {
                     ui.colored_label(
                         egui::Color32::from_rgb(210, 90, 90),
                         format!("sin guardar histórico: {err}"),
                     );
                 }
-                ui.separator();
-                ui.selectable_value(&mut self.filter, Filter::All, "Todas");
-                ui.selectable_value(&mut self.filter, Filter::NeedsAttention, "Me esperan");
-                ui.selectable_value(&mut self.filter, Filter::Active, "Activas");
+
+                if self.pantalla == Pantalla::Monitoreo {
+                    ui.separator();
+                    ui.selectable_value(&mut self.filter, Filter::All, "Todas");
+                    ui.selectable_value(&mut self.filter, Filter::NeedsAttention, "Me esperan");
+                    ui.selectable_value(&mut self.filter, Filter::Active, "Activas");
+                }
             });
         });
 
-        if let Some(id) = self.selected.clone()
-            && let Some(fila) = self.snapshot.rows.iter().find(|r| r.id == id).cloned()
-        {
-            egui::SidePanel::right("detalle")
-                .min_width(280.0)
-                .show(ctx, |ui| {
-                    ui.heading(fila.client.label());
-                    ui.label(state_label(fila.state));
-                    ui.separator();
-
-                    ui.label(format!("Rama: {}", fila.branch.as_deref().unwrap_or("—")));
-                    ui.label(format!("Ruta: {}", fila.anchor_path.display()));
-                    if let Some(pid) = fila.pid {
-                        ui.label(format!("PID: {pid}"));
-                    }
-                    ui.label(format!("Confianza: {:?}", fila.confidence));
-
-                    if let Some(m) = fila.metrics {
-                        ui.separator();
-                        ui.label("Tokens");
-                        ui.label(format!("entrada: {}", m.input));
-                        ui.label(format!("salida: {}", m.output));
-                        ui.label(format!("caché leída: {}", m.cache_read));
-                        ui.label(format!("razonamiento: {}", m.thinking));
-                        ui.label(format!("total: {}", m.total()));
-                    } else {
-                        ui.separator();
-                        ui.weak("Esta plataforma no expone conteo de tokens.");
-                    }
-
-                    ui.separator();
-                    match fila.warp_focus_url.as_deref() {
-                        Some(url) => {
-                            if ui.button("Saltar a la sesión en Warp").clicked() {
-                                let _ = jump_to(url);
-                            }
-                        }
-                        None => {
-                            ui.add_enabled(false, egui::Button::new("Saltar a la sesión en Warp"));
-                            ui.weak("Sin pane de Warp asociada.");
-                        }
-                    }
-                });
+        if self.pantalla == Pantalla::Selector {
+            self.pintar_selector(ctx);
+            return;
         }
 
+        let Some(snapshot) = self.snapshot.clone() else {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.weak("Sondeando…");
+            });
+            return;
+        };
+
+        self.pintar_detalle(ctx, &snapshot);
+
         match self.abierto.clone() {
-            None => self.pintar_proyectos(ctx),
-            Some(project) => self.pintar_ramas(ctx, project),
+            None => self.pintar_proyectos(ctx, &snapshot),
+            Some(project) => self.pintar_ramas(ctx, project, &snapshot),
         }
     }
 }
 
 impl ArgosApp {
-    fn pintar_proyectos(&mut self, ctx: &egui::Context) {
-        let resumen = summarize_projects(&self.snapshot.rows, self.filter);
+    fn pintar_detalle(&mut self, ctx: &egui::Context, snapshot: &Snapshot) {
+        let Some(id) = self.selected.clone() else {
+            return;
+        };
+        let Some(fila) = snapshot.rows.iter().find(|r| r.id == id).cloned() else {
+            return;
+        };
+
+        egui::SidePanel::right("detalle")
+            .min_width(280.0)
+            .show(ctx, |ui| {
+                ui.heading(fila.client.label());
+                ui.label(state_label(fila.state));
+                ui.separator();
+
+                ui.label(format!("Rama: {}", fila.branch.as_deref().unwrap_or("—")));
+                ui.label(format!("Ruta: {}", fila.anchor_path.display()));
+                if let Some(pid) = fila.pid {
+                    ui.label(format!("PID: {pid}"));
+                }
+                ui.label(format!("Confianza: {:?}", fila.confidence));
+
+                if let Some(m) = fila.metrics {
+                    ui.separator();
+                    ui.label("Tokens");
+                    ui.label(format!("entrada: {}", m.input));
+                    ui.label(format!("salida: {}", m.output));
+                    ui.label(format!("caché leída: {}", m.cache_read));
+                    ui.label(format!("razonamiento: {}", m.thinking));
+                    ui.label(format!("total: {}", m.total()));
+                } else {
+                    ui.separator();
+                    ui.weak("Esta plataforma no expone conteo de tokens.");
+                }
+
+                ui.separator();
+                match fila.warp_focus_url.as_deref() {
+                    Some(url) => {
+                        if ui.button("Saltar a la sesión en Warp").clicked() {
+                            let _ = jump_to(url);
+                        }
+                    }
+                    None => {
+                        ui.add_enabled(false, egui::Button::new("Saltar a la sesión en Warp"));
+                        ui.weak("Sin pane de Warp asociada.");
+                    }
+                }
+            });
+    }
+
+    fn pintar_proyectos(&mut self, ctx: &egui::Context, snapshot: &Snapshot) {
+        let resumen = summarize_projects(&snapshot.rows, self.filter);
 
         egui::CentralPanel::default().show(ctx, |ui| {
             if resumen.is_empty() {
@@ -258,8 +383,8 @@ impl ArgosApp {
         });
     }
 
-    fn pintar_ramas(&mut self, ctx: &egui::Context, project: Option<PathBuf>) {
-        let filas = self.filas_del_proyecto(&project);
+    fn pintar_ramas(&mut self, ctx: &egui::Context, project: Option<PathBuf>, snapshot: &Snapshot) {
+        let filas = self.filas_del_proyecto(&project, snapshot);
         let grupos = group_by_branch(&filas, self.filter);
 
         egui::CentralPanel::default().show(ctx, |ui| {
