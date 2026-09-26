@@ -1,3 +1,5 @@
+pub mod claude;
+
 use crate::error::ProbeError;
 use crate::model::ClientKind;
 use crate::observation::{Capabilities, SessionObservation};
