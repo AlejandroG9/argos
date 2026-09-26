@@ -28,6 +28,15 @@ pub mod espacio {
 
 pub const REDONDEO: f32 = 8.0;
 
+/// "1 sesiones" delata descuido en una interfaz que presume de cuidada.
+pub fn plural(n: usize, singular: &str, plural: &str) -> String {
+    if n == 1 {
+        format!("{n} {singular}")
+    } else {
+        format!("{n} {plural}")
+    }
+}
+
 /// Aplica la identidad visual al contexto. Sin esto, egui se ve como egui.
 pub fn aplicar_estilo(ctx: &egui::Context) {
     let mut estilo = (*ctx.style()).clone();
@@ -152,6 +161,13 @@ mod tests {
     #[test]
     fn una_edad_negativa_por_desfase_de_reloj_no_se_muestra_absurda() {
         assert_eq!(edad_legible(-10), "hace 0s");
+    }
+
+    #[test]
+    fn el_singular_y_el_plural_se_escriben_como_toca() {
+        assert_eq!(plural(0, "sesión", "sesiones"), "0 sesiones");
+        assert_eq!(plural(1, "sesión", "sesiones"), "1 sesión");
+        assert_eq!(plural(2, "sesión", "sesiones"), "2 sesiones");
     }
 
     #[test]

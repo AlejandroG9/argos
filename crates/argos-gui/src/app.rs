@@ -184,7 +184,7 @@ impl eframe::App for ArgosApp {
                     if ui.button("Proyectos").clicked() {
                         self.pantalla = Pantalla::Selector;
                     }
-                    ui.label(format!("{sesiones} sesiones"));
+                    ui.label(crate::theme::plural(sesiones, "sesión", "sesiones"));
                 }
 
                 if self.watcher.estado() == EstadoSondeo::Detenido {
@@ -317,13 +317,17 @@ impl ArgosApp {
 
                         let mut detalle = Vec::new();
                         if p.esperando > 0 {
-                            detalle.push(format!("{} te espera(n)", p.esperando));
+                            detalle.push(if p.esperando == 1 {
+                                "1 te espera".to_string()
+                            } else {
+                                format!("{} te esperan", p.esperando)
+                            });
                         }
                         if p.trabajando > 0 {
                             detalle.push(format!("{} trabajando", p.trabajando));
                         }
                         if detalle.is_empty() {
-                            detalle.push(format!("{} sesion(es)", p.total));
+                            detalle.push(crate::theme::plural(p.total, "sesión", "sesiones"));
                         }
                         ui.weak(detalle.join(" · "));
                     });

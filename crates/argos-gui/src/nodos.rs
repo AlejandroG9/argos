@@ -118,7 +118,7 @@ pub fn construir_grafo(
         grafo.nodos.push(Nodo {
             id: id_rama,
             etiqueta: rama,
-            detalle: format!("{} sesion(es)", filas_de_sesiones.len()),
+            detalle: crate::theme::plural(filas_de_sesiones.len(), "sesión", "sesiones"),
             estado: estado_mas_urgente(&filas),
             columna: 0,
             fila: promedio(&filas_de_sesiones),
