@@ -1,10 +1,12 @@
 use crate::jump::jump_to;
+use crate::projects::{nombre_de_proyecto, summarize_projects};
 use crate::theme::{confidence_hint, edad_legible, state_badge, state_label};
 use argos_core::model::AgentState;
 use argos_core::monitor::{Monitor, MonitorConfig, Snapshot};
 use argos_core::store::SessionRow;
 use chrono::Utc;
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 const REFRESH: Duration = Duration::from_secs(3);
@@ -20,12 +22,24 @@ pub enum Filter {
     Active,
 }
 
+impl Filter {
+    pub fn acepta(self, state: AgentState) -> bool {
+        match self {
+            Filter::All => true,
+            Filter::NeedsAttention => state == AgentState::Waiting,
+            Filter::Active => matches!(state, AgentState::Waiting | AgentState::Working),
+        }
+    }
+}
+
 pub struct ArgosApp {
     monitor: Monitor,
     snapshot: Snapshot,
     last_poll: Instant,
     pub selected: Option<String>,
     pub filter: Filter,
+    /// `None` = pantalla de proyectos. `Some` = dentro de ese proyecto.
+    pub abierto: Option<Option<PathBuf>>,
 }
 
 impl ArgosApp {
@@ -38,6 +52,7 @@ impl ArgosApp {
             last_poll: Instant::now(),
             selected: None,
             filter: Filter::default(),
+            abierto: None,
         }
     }
 
@@ -48,8 +63,14 @@ impl ArgosApp {
         }
     }
 
-    fn by_branch(&self) -> Vec<Grupo> {
-        group_by_branch(&self.snapshot.rows, self.filter)
+    /// Solo las sesiones del proyecto abierto.
+    fn filas_del_proyecto(&self, project: &Option<PathBuf>) -> Vec<SessionRow> {
+        self.snapshot
+            .rows
+            .iter()
+            .filter(|r| &r.project == project)
+            .cloned()
+            .collect()
     }
 }
 
@@ -83,12 +104,7 @@ pub fn group_by_branch(rows: &[SessionRow], filter: Filter) -> Vec<Grupo> {
     let mut por_rama: BTreeMap<String, Vec<SessionRow>> = BTreeMap::new();
 
     for row in rows {
-        let visible = match filter {
-            Filter::All => true,
-            Filter::NeedsAttention => row.state == AgentState::Waiting,
-            Filter::Active => matches!(row.state, AgentState::Waiting | AgentState::Working),
-        };
-        if !visible {
+        if !filter.acepta(row.state) {
             continue;
         }
 
@@ -136,6 +152,12 @@ impl eframe::App for ArgosApp {
                             "{} plataforma(s) degradada(s)",
                             self.snapshot.degraded.len()
                         ),
+                    );
+                }
+                if let Some(err) = &self.snapshot.persist_error {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(210, 90, 90),
+                        format!("sin guardar histórico: {err}"),
                     );
                 }
                 ui.separator();
@@ -190,9 +212,66 @@ impl eframe::App for ArgosApp {
                 });
         }
 
-        let grupos = self.by_branch();
+        match self.abierto.clone() {
+            None => self.pintar_proyectos(ctx),
+            Some(project) => self.pintar_ramas(ctx, project),
+        }
+    }
+}
+
+impl ArgosApp {
+    fn pintar_proyectos(&mut self, ctx: &egui::Context) {
+        let resumen = summarize_projects(&self.snapshot.rows, self.filter);
 
         egui::CentralPanel::default().show(ctx, |ui| {
+            if resumen.is_empty() {
+                ui.weak("Ningún proyecto con sesiones que coincidan con el filtro.");
+                return;
+            }
+
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for p in resumen {
+                    let (simbolo, color) = state_badge(p.estado);
+
+                    ui.horizontal(|ui| {
+                        ui.colored_label(color, simbolo);
+
+                        if ui.selectable_label(false, &p.nombre).clicked() {
+                            self.abierto = Some(p.project.clone());
+                            self.selected = None;
+                        }
+
+                        let mut detalle = Vec::new();
+                        if p.esperando > 0 {
+                            detalle.push(format!("{} te espera(n)", p.esperando));
+                        }
+                        if p.trabajando > 0 {
+                            detalle.push(format!("{} trabajando", p.trabajando));
+                        }
+                        if detalle.is_empty() {
+                            detalle.push(format!("{} sesion(es)", p.total));
+                        }
+                        ui.weak(detalle.join(" · "));
+                    });
+                }
+            });
+        });
+    }
+
+    fn pintar_ramas(&mut self, ctx: &egui::Context, project: Option<PathBuf>) {
+        let filas = self.filas_del_proyecto(&project);
+        let grupos = group_by_branch(&filas, self.filter);
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                if ui.button("← Proyectos").clicked() {
+                    self.abierto = None;
+                    self.selected = None;
+                }
+                ui.heading(nombre_de_proyecto(project.as_ref()));
+            });
+            ui.separator();
+
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for grupo in grupos {
                     // Lo que te espera se abre solo; lo terminado queda plegado.
@@ -248,6 +327,7 @@ mod tests {
             id: format!("{rama}-{state:?}"),
             client: ClientKind::ClaudeCode,
             anchor_path: PathBuf::from("/repo"),
+            project: Some(PathBuf::from("/repo")),
             branch: Some(rama.to_string()),
             warp_focus_url: None,
             pid: None,

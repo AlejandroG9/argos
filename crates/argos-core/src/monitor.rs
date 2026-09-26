@@ -18,6 +18,10 @@ pub struct Snapshot {
     pub rows: Vec<SessionRow>,
     /// Plataformas cuyo probe falló en este ciclo, con el motivo.
     pub degraded: Vec<(ClientKind, String)>,
+    /// Motivo por el que no se pudo guardar este ciclo. El tablero en vivo
+    /// sigue funcionando sin base, así que un fallo aquí sería invisible si
+    /// no se reportara.
+    pub persist_error: Option<String>,
     pub taken_at: DateTime<Utc>,
 }
 
@@ -90,9 +94,11 @@ impl Monitor {
             self.config.idle_threshold,
         );
 
-        if let Some(store) = &self.store {
-            let _ = persist(store, &snapshot);
-        }
+        let mut snapshot = snapshot;
+        snapshot.persist_error = match &self.store {
+            Some(store) => persist(store, &snapshot).err().map(|e| e.to_string()),
+            None => Some("no se pudo abrir la base de datos".to_string()),
+        };
 
         snapshot
     }
@@ -160,6 +166,7 @@ pub fn collect(
                 id: c.session.id.clone(),
                 client: c.session.client,
                 anchor_path: c.session.anchor_path.clone(),
+                project: worktree.map(|w| w.repo_root.clone()),
                 branch: worktree
                     .and_then(|w| w.branch.clone())
                     .or_else(|| c.session.git_branch.clone()),
@@ -181,6 +188,7 @@ pub fn collect(
     Snapshot {
         rows,
         degraded,
+        persist_error: None,
         taken_at: now,
     }
 }
@@ -315,6 +323,59 @@ mod tests {
             "no debe atribuirle la rama del repo que la contiene"
         );
         assert_eq!(snapshot.rows[0].confidence, Confidence::Low);
+    }
+
+    /// El proyecto es la raíz del repo, no la ruta del worktree: un agente en
+    /// `Orion/.worktrees/x` pertenece al proyecto `Orion`, que es el nivel por
+    /// el que el usuario navega.
+    #[test]
+    fn el_proyecto_es_la_raiz_del_repo_no_la_ruta_del_worktree() {
+        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let wt = repo.join("src");
+
+        struct P(PathBuf);
+        impl SessionProbe for P {
+            fn client(&self) -> ClientKind {
+                ClientKind::ClaudeCode
+            }
+            fn capabilities(&self) -> Capabilities {
+                Capabilities::full()
+            }
+            fn observe(&self) -> Result<Vec<SessionObservation>, ProbeError> {
+                Ok(vec![SessionObservation {
+                    id: "s".into(),
+                    client: ClientKind::ClaudeCode,
+                    anchor_path: self.0.clone(),
+                    git_branch: None,
+                    first_seen: None,
+                    last_activity: Utc::now(),
+                    activity: ActivitySemantics::AssistantTurnEnded,
+                    metrics: None,
+                    parent_id: None,
+                    source_path: PathBuf::from("/logs/s.jsonl"),
+                }])
+            }
+        }
+
+        let worktrees = vec![Worktree {
+            path: wt.clone(),
+            branch: Some("feat/x".into()),
+            repo_root: repo.clone(),
+        }];
+        let probes: Vec<Box<dyn SessionProbe>> = vec![Box::new(P(wt.clone()))];
+
+        let snapshot = collect(&probes, &[], &worktrees, Utc::now(), DEFAULT_IDLE_THRESHOLD);
+
+        assert_eq!(
+            snapshot.rows[0].project,
+            Some(repo),
+            "debe ser la raíz del repo"
+        );
+        assert_ne!(
+            snapshot.rows[0].project,
+            Some(wt),
+            "no la ruta del worktree"
+        );
     }
 
     /// El spec §7 exige que lo observado se persista desde el inicio.

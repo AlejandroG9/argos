@@ -38,6 +38,10 @@ fn main() {
         );
     }
 
+    if let Some(err) = &snapshot.persist_error {
+        println!("\nNo se pudo guardar el histórico: {err}");
+    }
+
     if !snapshot.degraded.is_empty() {
         println!("\nPlataformas degradadas:");
         for (client, motivo) in &snapshot.degraded {

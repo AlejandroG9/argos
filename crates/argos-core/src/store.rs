@@ -14,6 +14,9 @@ pub struct SessionRow {
     pub id: SessionId,
     pub client: ClientKind,
     pub anchor_path: PathBuf,
+    /// Raíz del repositorio al que pertenece la sesión. `None` cuando la
+    /// sesión corre fuera de cualquier repo conocido.
+    pub project: Option<PathBuf>,
     pub branch: Option<String>,
     pub warp_focus_url: Option<String>,
     pub pid: Option<u32>,
@@ -30,11 +33,19 @@ pub struct Store {
     conn: Connection,
 }
 
+/// Se sube al cambiar el esquema. Como la base es un índice derivado de los
+/// logs (spec §7), una versión distinta se resuelve tirando las tablas y
+/// reconstruyendo, no migrando datos.
+const SCHEMA_VERSION: i64 = 2;
+
+const DROP: &str = "DROP TABLE IF EXISTS samples; DROP TABLE IF EXISTS sessions;";
+
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS sessions (
     id              TEXT PRIMARY KEY,
     client          TEXT NOT NULL,
     anchor_path     TEXT NOT NULL,
+    project         TEXT,
     branch          TEXT,
     warp_focus_url  TEXT,
     pid             INTEGER,
@@ -65,27 +76,40 @@ CREATE INDEX IF NOT EXISTS idx_samples_session ON samples(session_id, observed_a
 impl Store {
     pub fn open(path: &Path) -> Result<Self, StoreError> {
         let conn = Connection::open(path)?;
-        conn.execute_batch(SCHEMA)?;
+        Self::preparar(&conn)?;
         Ok(Store { conn })
     }
 
     pub fn in_memory() -> Result<Self, StoreError> {
         let conn = Connection::open_in_memory()?;
-        conn.execute_batch(SCHEMA)?;
+        Self::preparar(&conn)?;
         Ok(Store { conn })
+    }
+
+    fn preparar(conn: &Connection) -> Result<(), StoreError> {
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+
+        if version != SCHEMA_VERSION {
+            conn.execute_batch(DROP)?;
+        }
+
+        conn.execute_batch(SCHEMA)?;
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        Ok(())
     }
 
     pub fn upsert_snapshot(&self, rows: &[SessionRow]) -> Result<(), StoreError> {
         for row in rows {
             self.conn.execute(
                 "INSERT INTO sessions (
-                    id, client, anchor_path, branch, warp_focus_url, pid, started_at,
-                    last_activity, state, confidence, parent_id, depth,
+                    id, client, anchor_path, project, branch, warp_focus_url, pid,
+                    started_at, last_activity, state, confidence, parent_id, depth,
                     input_tokens, output_tokens, cache_read_tokens,
                     cache_creation_tokens, thinking_tokens
-                 ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)
+                 ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)
                  ON CONFLICT(id) DO UPDATE SET
                     anchor_path = excluded.anchor_path,
+                    project = excluded.project,
                     branch = excluded.branch,
                     warp_focus_url = excluded.warp_focus_url,
                     pid = excluded.pid,
@@ -101,6 +125,9 @@ impl Store {
                     row.id,
                     client_to_str(row.client),
                     row.anchor_path.to_string_lossy(),
+                    row.project
+                        .as_ref()
+                        .map(|p| p.to_string_lossy().into_owned()),
                     row.branch,
                     row.warp_focus_url,
                     row.pid,
@@ -147,8 +174,8 @@ impl Store {
 
     pub fn current(&self) -> Result<Vec<SessionRow>, StoreError> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, client, anchor_path, branch, warp_focus_url, pid, started_at,
-                    last_activity, state, confidence, parent_id, depth,
+            "SELECT id, client, anchor_path, project, branch, warp_focus_url, pid,
+                    started_at, last_activity, state, confidence, parent_id, depth,
                     input_tokens, output_tokens, cache_read_tokens,
                     cache_creation_tokens, thinking_tokens
              FROM sessions",
@@ -162,31 +189,33 @@ impl Store {
                     .unwrap_or(0)
                     .max(0) as u64
             };
-            let input: Option<i64> = r.get(12)?;
+            let input: Option<i64> = r.get(13)?;
             let metrics = input.map(|input| TokenMetrics {
                 input: input.max(0) as u64,
-                output: leer_conteo(13),
-                cache_read: leer_conteo(14),
-                cache_creation: leer_conteo(15),
-                thinking: leer_conteo(16),
+                output: leer_conteo(14),
+                cache_read: leer_conteo(15),
+                cache_creation: leer_conteo(16),
+                thinking: leer_conteo(17),
             });
 
             Ok(SessionRow {
                 id: r.get(0)?,
                 client: client_from_str(&r.get::<_, String>(1)?).unwrap_or(ClientKind::ClaudeCode),
                 anchor_path: PathBuf::from(r.get::<_, String>(2)?),
-                branch: r.get(3)?,
-                warp_focus_url: r.get(4)?,
-                pid: r.get(5)?,
+                project: r.get::<_, Option<String>>(3)?.map(PathBuf::from),
+                branch: r.get(4)?,
+                warp_focus_url: r.get(5)?,
+                pid: r.get(6)?,
                 started_at: r
-                    .get::<_, Option<i64>>(6)?
+                    .get::<_, Option<i64>>(7)?
                     .and_then(|s| DateTime::from_timestamp(s, 0)),
-                last_activity: DateTime::from_timestamp(r.get::<_, i64>(7)?, 0)
+                last_activity: DateTime::from_timestamp(r.get::<_, i64>(8)?, 0)
                     .unwrap_or_else(Utc::now),
-                state: state_from_str(&r.get::<_, String>(8)?).unwrap_or(AgentState::Unknown),
-                confidence: confidence_from_str(&r.get::<_, String>(9)?).unwrap_or(Confidence::Low),
-                parent_id: r.get(10)?,
-                depth: r.get(11)?,
+                state: state_from_str(&r.get::<_, String>(9)?).unwrap_or(AgentState::Unknown),
+                confidence: confidence_from_str(&r.get::<_, String>(10)?)
+                    .unwrap_or(Confidence::Low),
+                parent_id: r.get(11)?,
+                depth: r.get(12)?,
                 metrics,
             })
         })?;
@@ -263,7 +292,8 @@ mod tests {
         SessionRow {
             id: id.to_string(),
             client: ClientKind::ClaudeCode,
-            anchor_path: PathBuf::from("/repo"),
+            anchor_path: PathBuf::from("/repo/.worktrees/x"),
+            project: Some(PathBuf::from("/repo")),
             branch: Some("main".into()),
             warp_focus_url: Some("warp://session/abc".into()),
             pid: Some(42),
@@ -295,6 +325,11 @@ mod tests {
         assert_eq!(filas[0].id, "s1");
         assert_eq!(filas[0].state, AgentState::Working);
         assert_eq!(filas[0].branch.as_deref(), Some("main"));
+        assert_eq!(
+            filas[0].project,
+            Some(PathBuf::from("/repo")),
+            "el proyecto debe sobrevivir el viaje a la base"
+        );
         assert_eq!(filas[0].metrics.map(|m| m.thinking), Some(5));
     }
 
@@ -350,6 +385,43 @@ mod tests {
             .upsert_snapshot(&[fila("s2", AgentState::Waiting)])
             .expect("reingerir");
         assert_eq!(store.current().expect("leer").len(), 1);
+    }
+
+    /// La base es un índice derivado (spec §7), así que al cambiar el esquema
+    /// debe reconstruirse sola. `CREATE TABLE IF NOT EXISTS` no añade columnas
+    /// a una tabla que ya existe: sin esto, la persistencia falla en silencio.
+    #[test]
+    fn una_base_con_esquema_viejo_se_reconstruye_al_abrirla() {
+        let ruta = std::env::temp_dir().join(format!(
+            "argos-esquema-viejo-{}-{}.db",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_file(&ruta);
+
+        // Esquema anterior: sin la columna `project`.
+        {
+            let vieja = rusqlite::Connection::open(&ruta).expect("crear");
+            vieja
+                .execute_batch(
+                    "CREATE TABLE sessions (id TEXT PRIMARY KEY, client TEXT NOT NULL,
+                     anchor_path TEXT NOT NULL, branch TEXT, last_activity INTEGER NOT NULL,
+                     state TEXT NOT NULL, confidence TEXT NOT NULL, depth INTEGER NOT NULL);
+                     INSERT INTO sessions VALUES ('vieja','claude_code','/x',NULL,0,'working','high',0);",
+                )
+                .expect("esquema viejo");
+        }
+
+        let store = Store::open(&ruta).expect("debe abrir y reconstruir");
+        store
+            .upsert_snapshot(&[fila("s1", AgentState::Working)])
+            .expect("debe poder escribir con el esquema nuevo");
+
+        let filas = store.current().expect("leer");
+        assert_eq!(filas.len(), 1, "las filas del esquema viejo se descartan");
+        assert_eq!(filas[0].project, Some(PathBuf::from("/repo")));
+
+        let _ = std::fs::remove_file(&ruta);
     }
 
     #[test]
