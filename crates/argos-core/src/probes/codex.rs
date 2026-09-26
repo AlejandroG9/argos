@@ -150,6 +150,18 @@ impl SessionProbe for CodexProbe {
             if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
                 continue;
             }
+            // Una línea basta para descartar: leer el archivo entero solo
+            // para tirarlo después es justo lo que se evita aquí.
+            if !matches!(scope, Scope::All) {
+                let dentro = primera_linea(path)
+                    .and_then(|l| cwd_de_cabecera(&l))
+                    .map(|cwd| scope.contains(&cwd))
+                    .unwrap_or(false);
+                if !dentro {
+                    continue;
+                }
+            }
+
             let Ok(contents) = std::fs::read_to_string(path) else {
                 continue;
             };
@@ -158,7 +170,6 @@ impl SessionProbe for CodexProbe {
             }
         }
 
-        sessions.retain(|s| scope.contains(&s.anchor_path));
         Ok(sessions)
     }
 }
@@ -166,7 +177,6 @@ impl SessionProbe for CodexProbe {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{BufRead, BufReader};
     use std::path::{Path, PathBuf};
 
     fn leer() -> String {
@@ -211,6 +221,35 @@ mod tests {
             cwd_de_cabecera(primera),
             Some(PathBuf::from("/p/orion/.worktrees/a"))
         );
+    }
+
+    /// Cubre el cableado, no solo la función suelta: sin este test la
+    /// comprobación de cabecera puede quedar desconectada y nadie se entera.
+    #[test]
+    fn el_probe_descarta_rollouts_de_otro_proyecto() {
+        let dir = std::env::temp_dir().join(format!("argos-codex-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("crear dir");
+        std::fs::write(dir.join("rollout-x.jsonl"), leer()).expect("escribir");
+
+        let probe = CodexProbe::new(dir.clone());
+
+        let dentro = probe
+            .observe(&Scope::projects(vec![PathBuf::from(
+                "/Users/alex/Proyectos/Orion",
+            )]))
+            .expect("observar");
+        assert_eq!(dentro.len(), 1, "el rollout está dentro de Orion");
+
+        let fuera = probe
+            .observe(&Scope::projects(vec![PathBuf::from("/p/otro")]))
+            .expect("observar");
+        assert!(
+            fuera.is_empty(),
+            "no debe devolver rollouts de otro proyecto"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
