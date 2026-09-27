@@ -11,8 +11,12 @@ pub mod color {
     pub const SUPERFICIE: Color32 = Color32::from_rgb(0x1C, 0x1F, 0x26);
     pub const SUPERFICIE_ALTA: Color32 = Color32::from_rgb(0x26, 0x2A, 0x33);
     pub const BORDE: Color32 = Color32::from_rgb(0x2E, 0x33, 0x3D);
-    pub const TEXTO: Color32 = Color32::from_rgb(0xE4, 0xE7, 0xEC);
-    pub const TEXTO_TENUE: Color32 = Color32::from_rgb(0x8B, 0x93, 0xA1);
+    /// Ni blanco ni casi blanco. Sobre un fondo oscuro el texto muy claro
+    /// florece y la pantalla se lee saturada; una terminal cuidada nunca
+    /// escribe en #FFF. 11.8:1 de contraste: sobra.
+    pub const TEXTO: Color32 = Color32::from_rgb(0xC9, 0xCF, 0xD8);
+    /// 4.8:1. Por debajo de esto dejaría de ser tenue para ser ilegible.
+    pub const TEXTO_TENUE: Color32 = Color32::from_rgb(0x7A, 0x82, 0x90);
     pub const LINEA: Color32 = Color32::from_rgb(0x39, 0x3F, 0x4B);
 
     /// Cobre. **Solo identidad**: el icono, la marca de la barra, el .icns.
@@ -24,10 +28,6 @@ pub mod color {
     /// Acromático a propósito: sin tono no se parece a ningún estado, ni
     /// ahora ni cuando se añada un séptimo carril.
     pub const ACENTO: Color32 = Color32::from_rgb(0xE8, 0xE3, 0xD7);
-
-    /// Texto sobre un relleno de acento. El hueso es claro: el texto del tema
-    /// encima sería ilegible.
-    pub const SOBRE_ACENTO: Color32 = Color32::from_rgb(0x0F, 0x11, 0x14);
 }
 
 /// Escala de espaciado. Usar siempre estos valores y no números sueltos es
@@ -57,12 +57,16 @@ pub fn estado_vacio(ui: &mut egui::Ui, titulo: &str, pista: &str) {
     });
 }
 
-/// Un chip: relleno de acento y texto oscuro cuando está activo, texto tenue
-/// cuando no.
+/// Un selector de texto, al modo de una terminal: sin relleno, marcado con un
+/// subrayado.
 ///
-/// Existe porque `selectable_value` pinta el relleno de selección pero deja el
-/// texto del tema, que sobre el hueso claro queda ilegible. El chip también es
-/// la forma que tiene el diseño: pastilla redondeada, no botón.
+/// Antes era una pastilla rellena de hueso. Tres de esas en la cabecera son
+/// tres bloques de máximo contraste peleando con el contenido, que es
+/// justo lo contrario de lo que se viene a mirar. El subrayado dice lo mismo
+/// ocupando una línea de un píxel y medio.
+///
+/// La caja reservada no cambia entre estados: una selección que ensancha el
+/// control mueve a sus vecinos cada vez que se pulsa.
 pub fn chip(ui: &mut egui::Ui, texto: &str, activo: bool) -> egui::Response {
     let fuente = egui::FontId::new(12.5, egui::FontFamily::Proportional);
     // PLACEHOLDER deja el color para el pintado: así el mismo trazado sirve
@@ -71,17 +75,37 @@ pub fn chip(ui: &mut egui::Ui, texto: &str, activo: bool) -> egui::Response {
         .painter()
         .layout_no_wrap(texto.to_owned(), fuente, egui::Color32::PLACEHOLDER);
 
-    let relleno = egui::vec2(espacio::M - 1.0, espacio::XS + 1.0);
-    let (rect, resp) = ui.allocate_exact_size(galley.size() + relleno * 2.0, egui::Sense::click());
+    let relleno = egui::vec2(espacio::S + 1.0, espacio::XS + 1.0);
+    let (rect, resp) = ui.allocate_exact_size(
+        galley.size() + relleno * 2.0 + egui::vec2(0.0, espacio::XS),
+        egui::Sense::click(),
+    );
 
-    let (fondo, tinta) = match (activo, resp.hovered()) {
-        (true, _) => (color::ACENTO, color::SOBRE_ACENTO),
-        (false, true) => (color::SUPERFICIE_ALTA, color::TEXTO),
-        (false, false) => (egui::Color32::TRANSPARENT, color::TEXTO_TENUE),
+    let tinta = match (activo, resp.hovered()) {
+        (true, _) => color::ACENTO,
+        (false, true) => color::TEXTO,
+        (false, false) => color::TEXTO_TENUE,
     };
 
-    ui.painter().rect_filled(rect, REDONDEO - 1.0, fondo);
     ui.painter().galley(rect.min + relleno, galley, tinta);
+
+    if activo {
+        let y = rect.bottom() - 1.5;
+        ui.painter().hline(
+            (rect.left() + relleno.x)..=(rect.right() - relleno.x),
+            y,
+            egui::Stroke::new(1.5, color::ACENTO),
+        );
+    } else if resp.hovered() {
+        // La misma línea, apenas insinuada: dice "esto se puede pulsar" sin
+        // competir con la que sí está activa.
+        let y = rect.bottom() - 1.5;
+        ui.painter().hline(
+            (rect.left() + relleno.x)..=(rect.right() - relleno.x),
+            y,
+            egui::Stroke::new(1.5, color::BORDE),
+        );
+    }
 
     if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);

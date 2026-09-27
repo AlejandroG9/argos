@@ -308,10 +308,16 @@ impl eframe::App for ArgosApp {
                         if ui.button("←").on_hover_text("Volver a proyectos").clicked() {
                             self.pantalla = Pantalla::Selector;
                         }
-                        ui.add_space(espacio::XS);
-                        ui.heading(nombre_de_proyecto(
-                            self.abierto.as_ref().and_then(|p| p.as_ref()),
-                        ));
+                        ui.add_space(espacio::S);
+                        // Monoespaciado: un nombre de proyecto es una ruta,
+                        // no una frase. Dicho en mono se lee como lo que es.
+                        ui.label(
+                            egui::RichText::new(nombre_de_proyecto(
+                                self.abierto.as_ref().and_then(|p| p.as_ref()),
+                            ))
+                            .font(egui::FontId::new(16.0, egui::FontFamily::Monospace))
+                            .color(crate::theme::color::TEXTO),
+                        );
                         ui.add_space(espacio::M);
                         // El hueco de la barra se gana con la respuesta a la
                         // pregunta por la que se abre la app, no se rellena:
@@ -454,9 +460,16 @@ impl ArgosApp {
             if i > 0 {
                 ui.add_space(espacio::S);
             }
+            // El color va solo en el símbolo. Teñir también las palabras
+            // llena la barra de texto saturado para repetir lo que el
+            // símbolo ya dijo.
             let (simbolo, color) = state_badge(*estado);
             ui.colored_label(color, simbolo);
-            ui.label(egui::RichText::new(texto).size(12.5).color(color));
+            ui.label(
+                egui::RichText::new(texto)
+                    .size(12.5)
+                    .color(crate::theme::color::TEXTO_TENUE),
+            );
         }
     }
 

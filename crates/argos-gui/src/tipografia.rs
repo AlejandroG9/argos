@@ -39,9 +39,13 @@ pub fn definiciones() -> FontDefinitions {
             .insert(nombre.to_owned(), Arc::new(FontData::from_static(bytes)));
     };
 
+    // Light (300), no Regular (400). Sobre fondo oscuro el texto claro
+    // florece y un peso normal se lee espeso: por eso el propio egui trae
+    // una Ubuntu **Light** de origen. Cambiarla por una Regular fue lo que
+    // dejó la interfaz con la letra saturada.
     meter(
         "plex-sans",
-        include_bytes!("../../../assets/fonts/IBMPlexSans-Regular.ttf"),
+        include_bytes!("../../../assets/fonts/IBMPlexSans-Light.ttf"),
     );
     meter(
         "plex-sans-semibold",
