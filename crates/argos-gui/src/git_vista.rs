@@ -175,15 +175,27 @@ pub fn ancho_estimado(grafo: &GrafoGit, zoom: f32) -> f32 {
 /// árbol, que es lo que se viene a ver.
 ///
 /// Devuelve el sha pulsado, si lo hubo.
-pub fn pintar_git(
-    ui: &mut egui::Ui,
-    grafo: &GrafoGit,
-    estado_ramas: &HashMap<String, (u32, u32)>,
-    filas: &[argos_core::store::SessionRow],
-    seleccionado: Option<&str>,
-    now: DateTime<Utc>,
-    zoom: f32,
-) -> Option<String> {
+pub struct Pintura<'a> {
+    pub estado_ramas: &'a HashMap<String, (u32, u32)>,
+    pub filas: &'a [argos_core::store::SessionRow],
+    pub logos: &'a mut crate::logos::Logos,
+    pub seleccionado: Option<&'a str>,
+    pub now: DateTime<Utc>,
+    pub zoom: f32,
+}
+
+pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> Option<String> {
+    let Pintura {
+        estado_ramas,
+        filas,
+        logos,
+        seleccionado,
+        now,
+        zoom,
+    } = p;
+    let (now, zoom, seleccionado) = (*now, *zoom, *seleccionado);
+    // Reloj continuo de egui: mueve la animación sin depender de la hora.
+    let t = ui.input(|i| i.time) as f32;
     let sep_commit = SEP_COMMIT * zoom;
     let sep_carril = SEP_CARRIL * zoom;
     let radio = RADIO * zoom;
@@ -274,29 +286,64 @@ pub fn pintar_git(
         // Si un agente trabaja ahora en la punta de esta rama, su insignia va
         // dentro del nodo: es lo que une este árbol con la vista de agentes.
         let agentes = agentes_en_punta(&n.refs, filas);
-        if let Some(agente) = agentes.first() {
-            let (_, color_estado) = state_badge(agente.state);
 
-            pintor.circle_filled(c, r * 0.82, color::FONDO);
-            pintor.circle_stroke(c, r * 0.82, egui::Stroke::new(2.0 * zoom, color_estado));
-            pintor.text(
-                c,
-                egui::Align2::CENTER_CENTER,
-                inicial_de_cliente(agente.client),
-                egui::FontId::proportional(11.0 * zoom),
-                color_estado,
+        for (i, agente) in agentes.iter().enumerate() {
+            let (_, color_estado) = state_badge(agente.state);
+            let radio_insignia = r * 0.92;
+
+            // Flota al lado del nodo, con un desfase por agente para que dos
+            // no se muevan al unísono, que se vería mecánico.
+            let fase = t * 1.9 + i as f32 * 1.3;
+            let flote = egui::vec2(
+                (r + radio_insignia + 6.0 * zoom) + i as f32 * radio_insignia * 2.3,
+                fase.sin() * 5.0 * zoom,
+            );
+            let centro_insignia = c + flote;
+
+            // Latido suave solo si está trabajando: al esperar, quieto.
+            let latido = if agente.state == argos_core::model::AgentState::Working {
+                1.0 + (t * 2.6).sin() * 0.07
+            } else {
+                1.0
+            };
+            let radio_insignia = radio_insignia * latido;
+
+            pintor.circle_filled(centro_insignia, radio_insignia, color::SUPERFICIE);
+            pintor.circle_stroke(
+                centro_insignia,
+                radio_insignia,
+                egui::Stroke::new(2.0 * zoom, color_estado),
             );
 
-            // Más de uno: un contador discreto en vez de apilar insignias.
-            if agentes.len() > 1 {
-                pintor.text(
-                    c + egui::vec2(r, -r),
-                    egui::Align2::CENTER_CENTER,
-                    format!("{}", agentes.len()),
-                    egui::FontId::proportional(9.0 * zoom),
-                    color::TEXTO_TENUE,
-                );
+            match logos.textura(ui.ctx(), agente.client) {
+                Some(tex) => {
+                    let lado = radio_insignia * 1.25;
+                    pintor.image(
+                        tex.id(),
+                        egui::Rect::from_center_size(centro_insignia, egui::vec2(lado, lado)),
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        egui::Color32::WHITE,
+                    );
+                }
+                None => {
+                    pintor.text(
+                        centro_insignia,
+                        egui::Align2::CENTER_CENTER,
+                        inicial_de_cliente(agente.client),
+                        egui::FontId::proportional(11.5 * zoom),
+                        color_estado,
+                    );
+                }
             }
+
+            // Un hilo fino hasta el nodo: deja claro de quién cuelga.
+            pintor.line_segment(
+                [
+                    c + egui::vec2(r, 0.0),
+                    centro_insignia - egui::vec2(radio_insignia, 0.0),
+                ],
+                egui::Stroke::new(1.0 * zoom, color_estado.gamma_multiply(0.5)),
+            );
         }
 
         // Las puntas de rama sí llevan etiqueta siempre: son lo que orienta.

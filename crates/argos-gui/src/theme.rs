@@ -31,6 +31,25 @@ pub const REDONDEO: f32 = 8.0;
 /// Una letra por plataforma para la insignia del nodo. No son los logotipos
 /// reales —eso necesitaría empaquetar imágenes— pero distinguen de un
 /// vistazo, que es lo que hace falta a este tamaño.
+pub fn archivo_de_logo(c: argos_core::model::ClientKind) -> &'static str {
+    use argos_core::model::ClientKind;
+    match c {
+        ClientKind::ClaudeCode => "claude",
+        ClientKind::Codex => "codex",
+        ClientKind::GeminiCli => "gemini",
+        ClientKind::Antigravity => "agy",
+    }
+}
+
+/// Carpeta donde el usuario deja los logotipos. Son marcas de terceros, así
+/// que no viajan con la app: si el archivo está, se usa; si no, la inicial.
+pub fn carpeta_de_logos() -> std::path::PathBuf {
+    std::env::var("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_default()
+        .join(".argos/logos")
+}
+
 pub fn inicial_de_cliente(c: argos_core::model::ClientKind) -> &'static str {
     use argos_core::model::ClientKind;
     match c {

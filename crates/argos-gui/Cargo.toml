@@ -9,3 +9,4 @@ argos-core = { path = "../argos-core" }
 chrono = "0.4.45"
 eframe = "0.33.3"
 egui = "0.33.3"
+image = { version = "0.25.10", default-features = false, features = ["png"] }

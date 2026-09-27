@@ -66,6 +66,7 @@ pub struct ArgosApp {
     /// La vista de git abre por el extremo reciente; solo la primera vez,
     /// para no arrastrar al usuario de vuelta cada refresco.
     git_centrado: bool,
+    logos: crate::logos::Logos,
     zoom: f32,
     /// `None` = lista de proyectos vigilados. `Some` = dentro de ese proyecto.
     pub abierto: Option<Option<PathBuf>>,
@@ -118,6 +119,7 @@ impl ArgosApp {
             vista: Vista::default(),
             commit_abierto: None,
             git_centrado: false,
+            logos: crate::logos::Logos::default(),
             zoom: 1.0,
             abierto,
         }
@@ -190,7 +192,20 @@ impl eframe::App for ArgosApp {
         if let Some(s) = self.watcher.latest() {
             self.snapshot = Some(s);
         }
-        ctx.request_repaint_after(REFRESH);
+        // Repintado continuo solo si hay un agente activo que animar: esta
+        // app vive abierta en segundo plano y no puede gastar CPU dibujando
+        // un árbol que no se mueve.
+        let hay_actividad = self.snapshot.as_ref().is_some_and(|s| {
+            s.rows
+                .iter()
+                .any(|r| matches!(r.state, AgentState::Working | AgentState::Waiting))
+        });
+
+        if hay_actividad && self.pantalla == Pantalla::Monitoreo {
+            ctx.request_repaint_after(Duration::from_millis(33));
+        } else {
+            ctx.request_repaint_after(REFRESH);
+        }
 
         let sesiones = self.snapshot.as_ref().map(|s| s.rows.len()).unwrap_or(0);
 
@@ -482,15 +497,16 @@ impl ArgosApp {
                     }
 
                     area.show(ui, |ui| {
-                        if let Some(sha) = pintar_git(
-                            ui,
-                            &grafo,
-                            &snapshot.ramas,
-                            &snapshot.rows,
-                            self.commit_abierto.as_deref(),
+                        let mut pintura = crate::git_vista::Pintura {
+                            estado_ramas: &snapshot.ramas,
+                            filas: &snapshot.rows,
+                            logos: &mut self.logos,
+                            seleccionado: self.commit_abierto.as_deref(),
                             now,
-                            self.zoom,
-                        ) {
+                            zoom: self.zoom,
+                        };
+
+                        if let Some(sha) = pintar_git(ui, &grafo, &mut pintura) {
                             self.commit_abierto = Some(sha);
                         }
                     });
