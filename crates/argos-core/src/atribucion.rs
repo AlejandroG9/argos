@@ -59,6 +59,69 @@ pub fn shas_mencionados(texto: &str, longitud: usize) -> HashSet<String> {
     encontrados
 }
 
+/// El mensaje del usuario inmediatamente anterior a la aparición del sha en
+/// la conversación: el *por qué* de ese commit, que git no guarda en ninguna
+/// parte.
+///
+/// Se recorre línea por línea recordando el último prompt humano. Los
+/// resultados de herramienta también viajan con `role: "user"`, así que hay
+/// que distinguirlos: solo cuenta un bloque de texto escrito por la persona.
+pub fn prompt_previo(texto: &str, sha: &str) -> Option<String> {
+    let mut ultimo: Option<String> = None;
+
+    for linea in texto.lines() {
+        if linea.contains(sha) {
+            return ultimo;
+        }
+
+        let Ok(entrada) = serde_json::from_str::<serde_json::Value>(linea) else {
+            continue;
+        };
+        let Some(mensaje) = entrada.get("message") else {
+            continue;
+        };
+        if mensaje.get("role").and_then(|r| r.as_str()) != Some("user") {
+            continue;
+        }
+
+        if let Some(t) = texto_humano(mensaje.get("content")) {
+            ultimo = Some(t);
+        }
+    }
+
+    None
+}
+
+fn texto_humano(contenido: Option<&serde_json::Value>) -> Option<String> {
+    let contenido = contenido?;
+
+    // Claude Code guarda el mensaje como cadena suelta o como bloques.
+    if let Some(t) = contenido.as_str() {
+        let t = t.trim();
+        return (!t.is_empty()).then(|| t.to_string());
+    }
+
+    let bloques = contenido.as_array()?;
+
+    // Si hay un tool_result, la entrada es salida de herramienta y no tuya.
+    if bloques
+        .iter()
+        .any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_result"))
+    {
+        return None;
+    }
+
+    let texto: String = bloques
+        .iter()
+        .filter(|b| b.get("type").and_then(|t| t.as_str()) == Some("text"))
+        .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let texto = texto.trim();
+    (!texto.is_empty()).then(|| texto.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -92,6 +155,85 @@ mod tests {
     fn un_sha_dentro_de_json_se_reconoce_igual() {
         let texto = r#"{"stdout":"[main 042b8776] feat: algo\n 3 files changed"}"#;
         assert!(shas_mencionados(texto, 8).contains("042b8776"));
+    }
+
+    /// El caso que da valor a todo esto: recuperar la petición que llevó a
+    /// ese commit, que no existe en git.
+    #[test]
+    fn recupera_el_mensaje_del_usuario_anterior_al_commit() {
+        let log = [
+            r#"{"message":{"role":"user","content":[{"type":"text","text":"arregla el filtro temporal"}]}}"#,
+            r#"{"message":{"role":"assistant","content":[{"type":"text","text":"voy"}]}}"#,
+            r#"{"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"x"}]}}"#,
+            r#"{"tool":"Bash","stdout":"[main 042b8776] fix: filtro"}"#,
+        ]
+        .join("\n");
+
+        assert_eq!(
+            prompt_previo(&log, "042b8776").as_deref(),
+            Some("arregla el filtro temporal")
+        );
+    }
+
+    /// Los resultados de herramienta llegan con role "user" y no son tuyos:
+    /// tomarlos por el prompt mostraría la salida de un comando como si
+    /// fuese lo que pediste.
+    #[test]
+    fn un_resultado_de_herramienta_no_se_confunde_con_una_peticion() {
+        let log = [
+            r#"{"message":{"role":"user","content":[{"type":"text","text":"la petición real"}]}}"#,
+            r#"{"message":{"role":"user","content":[{"type":"tool_result","content":"salida de un comando"}]}}"#,
+            r#"{"stdout":"[main abc12345] algo"}"#,
+        ]
+        .join("\n");
+
+        assert_eq!(
+            prompt_previo(&log, "abc12345").as_deref(),
+            Some("la petición real")
+        );
+    }
+
+    #[test]
+    fn se_queda_con_la_peticion_mas_cercana_al_commit() {
+        let log = [
+            r#"{"message":{"role":"user","content":[{"type":"text","text":"la vieja"}]}}"#,
+            r#"{"message":{"role":"user","content":[{"type":"text","text":"la de justo antes"}]}}"#,
+            r#"{"stdout":"[main abc12345] algo"}"#,
+        ]
+        .join("\n");
+
+        assert_eq!(
+            prompt_previo(&log, "abc12345").as_deref(),
+            Some("la de justo antes")
+        );
+    }
+
+    #[test]
+    fn un_mensaje_guardado_como_cadena_suelta_tambien_vale() {
+        let log = [
+            r#"{"message":{"role":"user","content":"petición en texto plano"}}"#,
+            r#"{"stdout":"[main abc12345] algo"}"#,
+        ]
+        .join("\n");
+
+        assert_eq!(
+            prompt_previo(&log, "abc12345").as_deref(),
+            Some("petición en texto plano")
+        );
+    }
+
+    #[test]
+    fn un_sha_que_no_aparece_no_tiene_peticion() {
+        let log = r#"{"message":{"role":"user","content":[{"type":"text","text":"hola"}]}}"#;
+        assert_eq!(prompt_previo(log, "noexiste"), None);
+    }
+
+    #[test]
+    fn un_commit_sin_peticion_previa_devuelve_nada() {
+        assert_eq!(
+            prompt_previo(r#"{"stdout":"[main abc12345] x"}"#, "abc12345"),
+            None
+        );
     }
 
     #[test]

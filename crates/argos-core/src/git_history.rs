@@ -12,6 +12,9 @@ pub struct Commit {
     pub autor: String,
     pub fecha: DateTime<Utc>,
     pub padres: Vec<String>,
+    /// Quién firma como coautor. A diferencia de las menciones, esto es
+    /// evidencia directa: el trailer lo escribió quien hizo el commit.
+    pub coautores: Vec<String>,
     /// Ramas y etiquetas que apuntan aquí. Sin esto no se sabe qué carril
     /// es cuál.
     pub refs: Vec<String>,
@@ -28,7 +31,7 @@ impl Commit {
 const SEP_CAMPO: char = '\u{1f}';
 const SEP_REGISTRO: char = '\u{1e}';
 
-const FORMATO: &str = "--format=%h%x1f%s%x1f%an%x1f%aI%x1f%p%x1f%D%x1e";
+const FORMATO: &str = "--format=%h%x1f%s%x1f%an%x1f%aI%x1f%p%x1f%D%x1f%b%x1e";
 
 pub fn parse_log(salida: &str) -> Vec<Commit> {
     salida
@@ -53,6 +56,10 @@ pub fn parse_log(salida: &str) -> Vec<Commit> {
                 fecha: fecha.with_timezone(&Utc),
                 padres: campos[4].split_whitespace().map(str::to_string).collect(),
                 refs: campos.get(5).map(|d| parse_refs(d)).unwrap_or_default(),
+                coautores: campos
+                    .get(6)
+                    .map(|b| parse_coautores(b))
+                    .unwrap_or_default(),
             })
         })
         .collect()
@@ -66,6 +73,23 @@ fn parse_refs(decoracion: &str) -> Vec<String> {
         .filter(|r| !r.is_empty())
         .map(|r| r.strip_prefix("HEAD -> ").unwrap_or(r).to_string())
         .filter(|r| r != "HEAD")
+        .collect()
+}
+
+/// Lee los trailers `Co-Authored-By` del cuerpo del mensaje. Git no impone
+/// mayúsculas, así que la comparación las ignora.
+pub fn parse_coautores(cuerpo: &str) -> Vec<String> {
+    cuerpo
+        .lines()
+        .filter_map(|l| {
+            let l = l.trim();
+            let (clave, valor) = l.split_once(':')?;
+            if !clave.trim().eq_ignore_ascii_case("co-authored-by") {
+                return None;
+            }
+            let valor = valor.trim();
+            (!valor.is_empty()).then(|| valor.to_string())
+        })
         .collect()
 }
 
@@ -187,6 +211,36 @@ mod tests {
             !refs.iter().any(|r| r.contains("HEAD ->")),
             "la flecha de HEAD no es un nombre de rama"
         );
+    }
+
+    #[test]
+    fn lee_los_coautores_del_cuerpo_del_mensaje() {
+        let cuerpo =
+            "Explicación del cambio.\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>";
+        assert_eq!(
+            parse_coautores(cuerpo),
+            vec!["Claude Opus 5 <noreply@anthropic.com>"]
+        );
+    }
+
+    /// Git no impone mayúsculas en los trailers, y hay herramientas que los
+    /// escriben en minúscula.
+    #[test]
+    fn el_trailer_se_reconoce_sin_importar_las_mayusculas() {
+        assert_eq!(parse_coautores("co-authored-by: Alguien <a@b.c>").len(), 1);
+        assert_eq!(parse_coautores("CO-AUTHORED-BY: Otro <d@e.f>").len(), 1);
+    }
+
+    #[test]
+    fn varios_coautores_se_leen_todos() {
+        let cuerpo = "x\nCo-Authored-By: Uno <1@x>\nCo-Authored-By: Dos <2@x>";
+        assert_eq!(parse_coautores(cuerpo).len(), 2);
+    }
+
+    #[test]
+    fn un_cuerpo_sin_trailers_no_inventa_coautores() {
+        assert!(parse_coautores("solo un mensaje\ncon dos líneas").is_empty());
+        assert!(parse_coautores("").is_empty());
     }
 
     #[test]

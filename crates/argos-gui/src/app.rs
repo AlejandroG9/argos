@@ -68,6 +68,9 @@ pub struct ArgosApp {
     git_centrado: bool,
     logos: crate::logos::Logos,
     mascota: crate::mascota::Mascota,
+    /// Peticiones ya recuperadas, por (commit, sesión). Leer un log de
+    /// sesión cuesta, así que se hace al pulsar y se recuerda.
+    prompts: std::collections::HashMap<(String, String), Option<String>>,
     zoom: f32,
     /// `None` = lista de proyectos vigilados. `Some` = dentro de ese proyecto.
     pub abierto: Option<Option<PathBuf>>,
@@ -122,6 +125,7 @@ impl ArgosApp {
             git_centrado: false,
             logos: crate::logos::Logos::default(),
             mascota: crate::mascota::Mascota::default(),
+            prompts: std::collections::HashMap::new(),
             zoom: 1.0,
             abierto,
         }
@@ -335,23 +339,45 @@ impl ArgosApp {
                 // "Menciona" y no "creó": una sesión que corrió `git log`
                 // menciona commits que no hizo. Ver `atribucion` en el núcleo.
                 for id in sesiones {
-                    let fila = snapshot.rows.iter().find(|r| r.id == id);
-                    ui.add_space(espacio::S);
-                    match fila {
-                        Some(f) => {
-                            ui.horizontal(|ui| {
-                                let (simbolo, color) = state_badge(f.state);
-                                ui.colored_label(color, simbolo);
-                                ui.label(f.client.label());
-                                ui.weak(state_label(f.state));
-                            });
-                            if let Some(m) = f.metrics {
-                                ui.weak(format!("{} tokens en la sesión", m.total()));
-                            }
-                        }
-                        None => {
-                            ui.weak(format!("sesión {id} (fuera de la vista actual)"));
-                        }
+                    let fila = snapshot.rows.iter().find(|r| r.id == id).cloned();
+                    ui.add_space(espacio::M);
+
+                    let Some(f) = fila else {
+                        ui.weak(format!("sesión {id} (fuera de la vista actual)"));
+                        continue;
+                    };
+
+                    ui.horizontal(|ui| {
+                        let (simbolo, color) = state_badge(f.state);
+                        ui.colored_label(color, simbolo);
+                        ui.label(f.client.label());
+                        ui.weak(state_label(f.state));
+                    });
+
+                    if let Some(m) = f.metrics {
+                        ui.weak(format!("{} tokens en la sesión", m.total()));
+                    }
+
+                    // La petición que llevó a este commit: el porqué, que no
+                    // está en git. Se lee al pulsar y se recuerda.
+                    let clave = (commit.sha.clone(), f.id.clone());
+                    let prompt = self
+                        .prompts
+                        .entry(clave)
+                        .or_insert_with(|| {
+                            f.source_path.as_ref().and_then(|ruta| {
+                                std::fs::read_to_string(ruta).ok().and_then(|t| {
+                                    argos_core::atribucion::prompt_previo(&t, &commit.sha)
+                                })
+                            })
+                        })
+                        .clone();
+
+                    if let Some(texto) = prompt {
+                        ui.add_space(espacio::S);
+                        ui.weak("lo pediste así:");
+                        let recorte: String = texto.chars().take(400).collect();
+                        ui.label(egui::RichText::new(recorte).italics());
                     }
                 }
             });

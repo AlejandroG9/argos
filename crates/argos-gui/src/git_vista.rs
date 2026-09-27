@@ -515,6 +515,7 @@ mod tests {
             autor: "Alex".into(),
             fecha: Utc::now() - Duration::minutes(1),
             padres: padres.iter().map(|p| p.to_string()).collect(),
+            coautores: vec![],
             refs: vec![],
         }
     }
