@@ -296,10 +296,12 @@ impl eframe::App for ArgosApp {
         let sesiones = self.snapshot.as_ref().map(|s| s.rows.len()).unwrap_or(0);
 
         egui::TopBottomPanel::top("encabezado")
-            .frame(egui::Frame::NONE.inner_margin(espacio::M))
+            .frame(
+                egui::Frame::NONE
+                    .fill(crate::theme::color::SUPERFICIE)
+                    .inner_margin(espacio::M),
+            )
             .show(ctx, |ui| {
-                crate::theme::pintar_barra(ui);
-
                 // Primera zona: dónde estoy y qué miro.
                 ui.horizontal(|ui| {
                     if self.pantalla == Pantalla::Monitoreo {

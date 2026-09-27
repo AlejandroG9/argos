@@ -221,15 +221,6 @@ pub fn pintar_marca(pintor: &egui::Painter, centro: egui::Pos2, radio: f32) {
     );
 }
 
-/// Una barra con fondo propio separa el mando del lienzo. Sin ese contraste
-/// el árbol parece flotar y los controles se confunden con el contenido.
-pub fn pintar_barra(ui: &mut egui::Ui) {
-    let r = ui.max_rect().expand2(egui::vec2(espacio::XL, 0.0));
-    ui.painter().rect_filled(r, 0.0, color::SUPERFICIE);
-    ui.painter()
-        .hline(r.x_range(), r.max.y, egui::Stroke::new(1.0, color::BORDE));
-}
-
 /// Una letra por plataforma para la insignia del nodo. No son los logotipos
 /// reales —eso necesitaría empaquetar imágenes— pero distinguen de un
 /// vistazo, que es lo que hace falta a este tamaño.
