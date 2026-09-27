@@ -21,9 +21,17 @@ pub fn infer(
 
     let idle = now - correlated.session.last_activity;
 
+    // Un subagente no habla contigo: cuando cierra su turno ha terminado y
+    // devuelve el control a su padre. Sin esto quedaba "esperando respuesta"
+    // para siempre, heredando además el proceso vivo de su padre.
+    let es_subagente = correlated.session.parent_id.is_some();
+
     let (state, own_confidence) = match correlated.session.activity {
         // La señal decisiva es semántica, no temporal.
         ActivitySemantics::ToolCallPending => (AgentState::Working, Confidence::High),
+        ActivitySemantics::AssistantTurnEnded if es_subagente => {
+            (AgentState::Finished, Confidence::High)
+        }
         ActivitySemantics::AssistantTurnEnded => (AgentState::Waiting, Confidence::High),
         ActivitySemantics::Indeterminate if idle < idle_threshold => {
             (AgentState::Working, Confidence::Low)
@@ -151,6 +159,38 @@ mod tests {
         );
         assert_eq!(estado, AgentState::Unknown);
         assert_eq!(confianza, Confidence::Low);
+    }
+
+    /// Un subagente no habla contigo: termina y devuelve el control a su
+    /// padre. Leer su turno cerrado como "esperando respuesta" lo deja
+    /// eternamente vivo — 26 subagentes de hace tres días aparecían
+    /// esperándote, heredando el proceso de una sesión ajena.
+    #[test]
+    fn un_subagente_con_el_turno_cerrado_termino_no_espera() {
+        let mut sub = caso(ActivitySemantics::AssistantTurnEnded, true, 0);
+        sub.session.parent_id = Some("padre".into());
+
+        let (estado, _) = infer(&sub, t(100), UMBRAL);
+        assert_eq!(estado, AgentState::Finished);
+    }
+
+    #[test]
+    fn una_sesion_raiz_con_el_turno_cerrado_si_te_espera() {
+        let raiz = caso(ActivitySemantics::AssistantTurnEnded, true, 0);
+        assert!(raiz.session.parent_id.is_none());
+
+        let (estado, _) = infer(&raiz, t(100), UMBRAL);
+        assert_eq!(estado, AgentState::Waiting);
+    }
+
+    /// Un subagente a mitad de una herramienta sí sigue trabajando.
+    #[test]
+    fn un_subagente_con_herramienta_pendiente_sigue_trabajando() {
+        let mut sub = caso(ActivitySemantics::ToolCallPending, true, 0);
+        sub.session.parent_id = Some("padre".into());
+
+        let (estado, _) = infer(&sub, t(10), UMBRAL);
+        assert_eq!(estado, AgentState::Working);
     }
 
     #[test]

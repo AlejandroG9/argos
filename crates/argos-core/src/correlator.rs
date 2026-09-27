@@ -30,7 +30,7 @@ pub fn correlate(
     // `~/Proyectos` encaja con sesiones de todos sus subdirectorios, y
     // repartirlo entre varias haría que el salto a la terminal llevara a la
     // conversación equivocada.
-    let mut parejas: Vec<(usize, usize, bool, i64)> = Vec::new();
+    let mut parejas: Vec<(usize, usize, bool, DateTime<Utc>, i64)> = Vec::new();
 
     for (is, session) in raices.iter().enumerate() {
         for (ip, proc) in procs.iter().enumerate() {
@@ -53,21 +53,31 @@ pub fn correlate(
 
             let exacto = cwd == session.anchor_path;
             let referencia = session.first_seen.unwrap_or(session.last_activity);
-            parejas.push((is, ip, exacto, distancia(proc.started_at, referencia)));
+            parejas.push((
+                is,
+                ip,
+                exacto,
+                session.last_activity,
+                distancia(proc.started_at, referencia),
+            ));
         }
     }
 
-    // Primero las coincidencias exactas, luego las más cercanas en el tiempo.
-    // Los índices desempatan para que el reparto no dependa del orden de
-    // recorrido de un HashMap: mismo dato, mismo resultado.
-    parejas.sort_by_key(|(is, ip, exacto, dist)| (!*exacto, *dist, *is, *ip));
+    // Primero las coincidencias exactas de ruta. Entre las demás manda la
+    // actividad más reciente: el proceso está escribiendo en la sesión que
+    // acaba de moverse, no en una que lleva días quieta. La cercanía del
+    // arranque y los índices solo desempatan, para que el reparto no dependa
+    // del orden de recorrido de un HashMap.
+    parejas.sort_by_key(|(is, ip, exacto, ultima, dist)| {
+        (!*exacto, std::cmp::Reverse(*ultima), *dist, *is, *ip)
+    });
 
     // Una pareja disputada es una conjetura aunque la ruta coincida exacto:
     // con dos procesos y dos sesiones en el mismo directorio, cuál va con
     // cuál se decide por cercanía temporal, que es heurística.
     let mut candidatos_por_sesion = vec![0usize; raices.len()];
     let mut candidatos_por_proceso = vec![0usize; procs.len()];
-    for (is, ip, _, _) in &parejas {
+    for (is, ip, _, _, _) in &parejas {
         candidatos_por_sesion[*is] += 1;
         candidatos_por_proceso[*ip] += 1;
     }
@@ -76,7 +86,7 @@ pub fn correlate(
     let mut procesos_tomados = vec![false; procs.len()];
     let mut asignado: Vec<Option<usize>> = vec![None; raices.len()];
 
-    for (is, ip, _, _) in parejas {
+    for (is, ip, _, _, _) in parejas {
         if sesiones_tomadas[is] || procesos_tomados[ip] {
             continue;
         }
