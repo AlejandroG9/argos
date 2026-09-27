@@ -147,17 +147,21 @@ impl ArgosApp {
 
     fn pintar_selector(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
+            ui.add_space(espacio::S);
             ui.heading("¿Qué proyecto quieres monitorear?");
-            ui.weak("Elige uno y Argos leerá solo sus logs.");
-            ui.separator();
+            ui.add_space(espacio::XS);
+            ui.weak("Elige uno y Argos leerá solo sus registros.");
+            ui.add_space(espacio::L);
 
             let mut abrir: Option<PathBuf> = None;
 
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for p in &self.disponibles {
-                    if ui.selectable_label(false, &p.nombre).clicked() {
+                    let fila = ui.selectable_label(false, &p.nombre);
+                    if fila.clicked() {
                         abrir = Some(p.path.clone());
                     }
+                    fila.on_hover_text(p.path.display().to_string());
                 }
             });
 
@@ -215,54 +219,69 @@ impl eframe::App for ArgosApp {
 
         let sesiones = self.snapshot.as_ref().map(|s| s.rows.len()).unwrap_or(0);
 
-        egui::TopBottomPanel::top("encabezado").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("Argos");
+        egui::TopBottomPanel::top("encabezado")
+            .frame(egui::Frame::NONE.inner_margin(espacio::M))
+            .show(ctx, |ui| {
+                crate::theme::pintar_barra(ui);
 
-                if self.pantalla == Pantalla::Monitoreo {
-                    if ui.button("Proyectos").clicked() {
-                        self.pantalla = Pantalla::Selector;
+                // Primera zona: dónde estoy y qué miro.
+                ui.horizontal(|ui| {
+                    if self.pantalla == Pantalla::Monitoreo {
+                        if ui.button("←").on_hover_text("Volver a proyectos").clicked() {
+                            self.pantalla = Pantalla::Selector;
+                        }
+                        ui.add_space(espacio::XS);
+                        ui.heading(nombre_de_proyecto(
+                            self.abierto.as_ref().and_then(|p| p.as_ref()),
+                        ));
+                        ui.add_space(espacio::S);
+                        ui.weak(crate::theme::plural(sesiones, "sesión", "sesiones"));
+                    } else {
+                        ui.heading("Argos");
                     }
-                    ui.label(crate::theme::plural(sesiones, "sesión", "sesiones"));
-                }
 
-                if self.watcher.estado() == EstadoSondeo::Detenido {
-                    ui.colored_label(
-                        egui::Color32::from_rgb(210, 90, 90),
-                        "el sondeo se detuvo: los datos no se actualizan",
-                    );
-                }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if self.pantalla == Pantalla::Monitoreo {
+                            if ui.small_button("+").clicked() {
+                                self.zoom = (self.zoom * 1.15).min(2.0);
+                            }
+                            if ui.small_button("−").clicked() {
+                                self.zoom = (self.zoom / 1.15).max(0.5);
+                            }
+                            ui.weak(format!("{:.0}%", self.zoom * 100.0));
+                            ui.add_space(espacio::L);
 
-                if let Some(err) = self
-                    .snapshot
-                    .as_ref()
-                    .and_then(|s| s.persist_error.as_ref())
-                {
-                    ui.colored_label(
-                        egui::Color32::from_rgb(210, 90, 90),
-                        format!("sin guardar histórico: {err}"),
-                    );
-                }
+                            ui.selectable_value(&mut self.vista, Vista::Agentes, "Agentes");
+                            ui.selectable_value(&mut self.vista, Vista::Git, "Git");
+                        }
 
+                        for aviso in self.avisos() {
+                            ui.colored_label(egui::Color32::from_rgb(210, 90, 90), aviso);
+                        }
+                    });
+                });
+
+                // Segunda zona: refinar lo que ya se está mirando. Más tenue
+                // a propósito — es ajuste, no navegación.
                 if self.pantalla == Pantalla::Monitoreo {
-                    ui.separator();
-                    ui.selectable_value(&mut self.vista, Vista::Git, "Git");
-                    ui.selectable_value(&mut self.vista, Vista::Agentes, "Agentes");
-                    ui.separator();
-                    ui.selectable_value(&mut self.filter, Filter::All, "Todas");
-                    ui.selectable_value(&mut self.filter, Filter::NeedsAttention, "Me esperan");
-                    ui.selectable_value(&mut self.filter, Filter::Active, "Activas");
+                    ui.add_space(espacio::S);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = espacio::XS;
+                        ui.small("estado");
+                        ui.add_space(espacio::XS);
+                        ui.selectable_value(&mut self.filter, Filter::Active, "activas");
+                        ui.selectable_value(&mut self.filter, Filter::NeedsAttention, "me esperan");
+                        ui.selectable_value(&mut self.filter, Filter::All, "todas");
+
+                        ui.add_space(espacio::L);
+                        ui.small("cuándo");
+                        ui.add_space(espacio::XS);
+                        for v in [Ventana::Hoy, Ventana::Dias7, Ventana::Dias30, Ventana::Todo] {
+                            ui.selectable_value(&mut self.ventana, v, v.etiqueta());
+                        }
+                    });
                 }
             });
-
-            if self.pantalla == Pantalla::Monitoreo {
-                ui.horizontal(|ui| {
-                    for v in [Ventana::Hoy, Ventana::Dias7, Ventana::Dias30, Ventana::Todo] {
-                        ui.selectable_value(&mut self.ventana, v, v.etiqueta());
-                    }
-                });
-            }
-        });
 
         if self.pantalla == Pantalla::Selector {
             self.pintar_selector(ctx);
@@ -271,7 +290,11 @@ impl eframe::App for ArgosApp {
 
         let Some(snapshot) = self.snapshot.clone() else {
             egui::CentralPanel::default().show(ctx, |ui| {
-                ui.weak("Sondeando…");
+                crate::theme::estado_vacio(
+                    ui,
+                    "Leyendo el proyecto…",
+                    "El primer sondeo recorre los registros de cada plataforma.",
+                );
             });
             return;
         };
@@ -289,6 +312,37 @@ impl eframe::App for ArgosApp {
 }
 
 impl ArgosApp {
+    /// Lo que va mal ahora mismo, en rojo y en la barra: un sondeo muerto o
+    /// un histórico que no se guarda serían invisibles de otro modo.
+    fn avisos(&self) -> Vec<String> {
+        let mut v = Vec::new();
+
+        if self.watcher.estado() == EstadoSondeo::Detenido {
+            v.push("el sondeo se detuvo".to_string());
+        }
+        if let Some(e) = self
+            .snapshot
+            .as_ref()
+            .and_then(|s| s.persist_error.as_ref())
+        {
+            v.push(format!("sin guardar histórico: {e}"));
+        }
+        if let Some(n) = self
+            .snapshot
+            .as_ref()
+            .map(|s| s.degraded.len())
+            .filter(|n| *n > 0)
+        {
+            v.push(crate::theme::plural(
+                n,
+                "plataforma degradada",
+                "plataformas degradadas",
+            ));
+        }
+
+        v
+    }
+
     fn pintar_detalle_commit(&mut self, ctx: &egui::Context, snapshot: &Snapshot) {
         let Some(sha) = self.commit_abierto.clone() else {
             return;
@@ -479,24 +533,6 @@ impl ArgosApp {
         let now = Utc::now();
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                if ui.button("← Proyectos").clicked() {
-                    self.pantalla = Pantalla::Selector;
-                }
-                ui.heading(nombre_de_proyecto(project.as_ref()));
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("+").clicked() {
-                        self.zoom = (self.zoom * 1.15).min(2.0);
-                    }
-                    if ui.small_button("−").clicked() {
-                        self.zoom = (self.zoom / 1.15).max(0.5);
-                    }
-                    ui.weak(format!("{:.0}%", self.zoom * 100.0));
-                });
-            });
-            ui.add_space(espacio::S);
-
             match self.vista {
                 Vista::Git => {
                     let commits: Vec<_> = snapshot
@@ -507,7 +543,11 @@ impl ArgosApp {
                         .collect();
 
                     if commits.is_empty() {
-                        ui.weak("Sin commits en esta ventana temporal.");
+                        crate::theme::estado_vacio(
+                            ui,
+                            "Sin commits en esta ventana",
+                            "Prueba a ampliar el rango de tiempo arriba.",
+                        );
                         return;
                     }
 
@@ -561,7 +601,11 @@ impl ArgosApp {
                     let grafo = construir_grafo(&filas, self.filter, self.ventana, now);
 
                     if grafo.nodos.is_empty() {
-                        ui.weak("Nada que mostrar con los filtros actuales.");
+                        crate::theme::estado_vacio(
+                            ui,
+                            "Ningún agente coincide",
+                            "Cambia el filtro de estado o amplía el rango de tiempo.",
+                        );
                         return;
                     }
 

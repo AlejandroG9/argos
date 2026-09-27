@@ -20,6 +20,7 @@ pub mod color {
 /// Escala de espaciado. Usar siempre estos valores y no números sueltos es
 /// la mitad de por qué una interfaz se ve ordenada.
 pub mod espacio {
+    pub const XS: f32 = 4.0;
     pub const S: f32 = 8.0;
     pub const M: f32 = 12.0;
     pub const L: f32 = 16.0;
@@ -27,6 +28,30 @@ pub mod espacio {
 }
 
 pub const REDONDEO: f32 = 8.0;
+
+/// Un vacío explicado, centrado y con la salida a mano. "No hay nada" sin
+/// decir por qué ni qué hacer deja al usuario preguntándose si se rompió.
+pub fn estado_vacio(ui: &mut egui::Ui, titulo: &str, pista: &str) {
+    ui.vertical_centered(|ui| {
+        ui.add_space(espacio::XL * 2.0);
+        ui.label(egui::RichText::new(titulo).size(15.0).color(color::TEXTO));
+        ui.add_space(espacio::S);
+        ui.label(
+            egui::RichText::new(pista)
+                .size(12.5)
+                .color(color::TEXTO_TENUE),
+        );
+    });
+}
+
+/// Una barra con fondo propio separa el mando del lienzo. Sin ese contraste
+/// el árbol parece flotar y los controles se confunden con el contenido.
+pub fn pintar_barra(ui: &mut egui::Ui) {
+    let r = ui.max_rect().expand2(egui::vec2(espacio::XL, 0.0));
+    ui.painter().rect_filled(r, 0.0, color::SUPERFICIE);
+    ui.painter()
+        .hline(r.x_range(), r.max.y, egui::Stroke::new(1.0, color::BORDE));
+}
 
 /// Una letra por plataforma para la insignia del nodo. No son los logotipos
 /// reales —eso necesitaría empaquetar imágenes— pero distinguen de un
