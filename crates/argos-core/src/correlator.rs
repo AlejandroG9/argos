@@ -1,9 +1,8 @@
 use crate::discovery::{Worktree, worktree_containing};
-use crate::model::{ClientKind, Confidence};
+use crate::model::Confidence;
 use crate::observation::{ProcessObservation, SessionObservation};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub struct Correlated {
@@ -21,81 +20,106 @@ pub fn correlate(
     let mut resultado: Vec<Correlated> = Vec::new();
     let mut proceso_por_sesion: HashMap<String, ProcessObservation> = HashMap::new();
 
-    // Primera pasada: solo sesiones raíz. Los subagentes corren dentro del
-    // proceso de su padre, así que no compiten por uno propio.
-    // Se agrupan por (cliente, ruta ancla) porque la ambigüedad es local al
-    // directorio: varias sesiones del mismo CLI en el mismo worktree.
-    let mut grupos: HashMap<(ClientKind, PathBuf), Vec<&SessionObservation>> = HashMap::new();
-    for session in sessions.iter().filter(|s| s.parent_id.is_none()) {
-        grupos
-            .entry((session.client, session.anchor_path.clone()))
-            .or_default()
-            .push(session);
-    }
+    // Solo sesiones raíz: los subagentes corren dentro del proceso de su
+    // padre y no compiten por uno propio.
+    let raices: Vec<&SessionObservation> =
+        sessions.iter().filter(|s| s.parent_id.is_none()).collect();
 
-    for ((client, anchor), mut grupo) in grupos {
-        // El cwd del proceso es donde el agente **arrancó**; el de la sesión,
-        // donde está trabajando. Un agente que hizo `cd` a un subdirectorio
-        // sigue siendo el mismo proceso, así que también valen los ancestros.
-        // Exigir igualdad exacta lo dejaba sin proceso, y sin proceso el motor
-        // lo declara terminado aunque esté ejecutando comandos.
-        let en_grupo: Vec<&ProcessObservation> = procs
-            .iter()
-            .filter(|p| p.client == client)
-            .filter(|p| p.cwd.as_deref().is_some_and(|cwd| anchor.starts_with(cwd)))
-            .collect();
+    // Un proceso es **una** sesión. Se resuelve como una asignación global y
+    // no grupo por grupo: al aceptar directorios ancestro, un `claude` en
+    // `~/Proyectos` encaja con sesiones de todos sus subdirectorios, y
+    // repartirlo entre varias haría que el salto a la terminal llevara a la
+    // conversación equivocada.
+    let mut parejas: Vec<(usize, usize, bool, i64)> = Vec::new();
 
-        // Con un solo proceso y una sola sesión no hay nada que adivinar.
-        let ambiguo = en_grupo.len() > 1 || grupo.len() > 1;
-
-        // Emparejar de la más antigua a la más reciente, para que el orden de
-        // asignación sea determinista.
-        grupo.sort_by_key(|s| s.first_seen.unwrap_or(s.last_activity));
-
-        let mut usados: Vec<u32> = Vec::new();
-
-        for session in grupo {
-            let referencia = session.first_seen.unwrap_or(session.last_activity);
-
-            // Un proceso que arrancó después de la última actividad de la
-            // sesión no puede haberla producido.
-            // Un candidato exacto gana a uno que solo es ancestro: es el que
-            // de verdad está en ese directorio. Entre iguales, el más cercano
-            // en el tiempo.
-            let elegido = en_grupo
-                .iter()
-                .filter(|p| !usados.contains(&p.pid))
-                .filter(|p| p.started_at <= session.last_activity)
-                .min_by_key(|p| {
-                    let exacto = p.cwd.as_deref() != Some(anchor.as_path());
-                    (exacto, distancia(p.started_at, referencia))
-                })
-                .map(|p| (*p).clone());
-
-            if let Some(p) = &elegido {
-                usados.push(p.pid);
-                proceso_por_sesion.insert(session.id.clone(), p.clone());
+    for (is, session) in raices.iter().enumerate() {
+        for (ip, proc) in procs.iter().enumerate() {
+            if proc.client != session.client {
+                continue;
+            }
+            // El cwd del proceso es donde el agente arrancó; el de la sesión,
+            // donde trabaja. Vale el mismo directorio o cualquier ancestro.
+            let Some(cwd) = proc.cwd.as_deref() else {
+                continue;
+            };
+            if !session.anchor_path.starts_with(cwd) {
+                continue;
+            }
+            // Un proceso que arrancó después de la última actividad no pudo
+            // haberla producido.
+            if proc.started_at > session.last_activity {
+                continue;
             }
 
-            let worktree = worktree_containing(worktrees, &session.anchor_path).cloned();
-
-            let confianza = match (&elegido, &worktree) {
-                (_, None) => Confidence::Low,
-                (None, _) => Confidence::Low,
-                (Some(_), Some(_)) if ambiguo => Confidence::Medium,
-                (Some(_), Some(_)) => Confidence::High,
-            };
-
-            resultado.push(Correlated {
-                session: session.clone(),
-                process: elegido,
-                worktree,
-                confidence: confianza,
-            });
+            let exacto = cwd == session.anchor_path;
+            let referencia = session.first_seen.unwrap_or(session.last_activity);
+            parejas.push((is, ip, exacto, distancia(proc.started_at, referencia)));
         }
     }
 
-    // Segunda pasada: subagentes heredan el proceso del padre.
+    // Primero las coincidencias exactas, luego las más cercanas en el tiempo.
+    // Los índices desempatan para que el reparto no dependa del orden de
+    // recorrido de un HashMap: mismo dato, mismo resultado.
+    parejas.sort_by_key(|(is, ip, exacto, dist)| (!*exacto, *dist, *is, *ip));
+
+    // Una pareja disputada es una conjetura aunque la ruta coincida exacto:
+    // con dos procesos y dos sesiones en el mismo directorio, cuál va con
+    // cuál se decide por cercanía temporal, que es heurística.
+    let mut candidatos_por_sesion = vec![0usize; raices.len()];
+    let mut candidatos_por_proceso = vec![0usize; procs.len()];
+    for (is, ip, _, _) in &parejas {
+        candidatos_por_sesion[*is] += 1;
+        candidatos_por_proceso[*ip] += 1;
+    }
+
+    let mut sesiones_tomadas = vec![false; raices.len()];
+    let mut procesos_tomados = vec![false; procs.len()];
+    let mut asignado: Vec<Option<usize>> = vec![None; raices.len()];
+
+    for (is, ip, _, _) in parejas {
+        if sesiones_tomadas[is] || procesos_tomados[ip] {
+            continue;
+        }
+        sesiones_tomadas[is] = true;
+        procesos_tomados[ip] = true;
+        asignado[is] = Some(ip);
+    }
+
+    for (is, session) in raices.iter().enumerate() {
+        let elegido = asignado[is].map(|ip| procs[ip].clone());
+
+        if let Some(p) = &elegido {
+            proceso_por_sesion.insert(session.id.clone(), p.clone());
+        }
+
+        let worktree = worktree_containing(worktrees, &session.anchor_path).cloned();
+
+        // Ambiguo cuando el proceso no estaba exactamente en el directorio de
+        // la sesión: el emparejamiento es entonces una inferencia, no un dato.
+        let exacto = elegido
+            .as_ref()
+            .and_then(|p| p.cwd.as_deref())
+            .is_some_and(|cwd| cwd == session.anchor_path);
+
+        let disputado = candidatos_por_sesion[is] > 1
+            || asignado[is].is_some_and(|ip| candidatos_por_proceso[ip] > 1);
+
+        let confianza = match (&elegido, &worktree) {
+            (_, None) => Confidence::Low,
+            (None, _) => Confidence::Low,
+            (Some(_), Some(_)) if exacto && !disputado => Confidence::High,
+            (Some(_), Some(_)) => Confidence::Medium,
+        };
+
+        resultado.push(Correlated {
+            session: (*session).clone(),
+            process: elegido,
+            worktree,
+            confidence: confianza,
+        });
+    }
+
+    // Segunda pasada: los subagentes heredan el proceso de su padre.
     for session in sessions.iter().filter(|s| s.parent_id.is_some()) {
         let process = session
             .parent_id
@@ -128,7 +152,8 @@ fn distancia(a: DateTime<Utc>, b: DateTime<Utc>) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{ClientKind, Confidence};
+    use crate::model::ClientKind;
+    use crate::model::Confidence;
     use crate::observation::ActivitySemantics;
     use chrono::{Duration, TimeZone, Utc};
     use std::path::PathBuf;
@@ -300,6 +325,73 @@ mod tests {
                 .map(|p| p.pid),
             Some(200)
         );
+    }
+
+    /// Un proceso es **una** sesión. Al aceptar ancestros, un `claude` en
+    /// `~/Proyectos` encaja con sesiones de todos sus subdirectorios; si cada
+    /// grupo lleva su propia lista de usados, el mismo proceso se reparte
+    /// entre proyectos y el salto a la terminal lleva a la conversación
+    /// equivocada.
+    #[test]
+    fn un_proceso_no_se_reparte_entre_sesiones_de_proyectos_distintos() {
+        let procs = vec![proceso(100, "/repo", 0)];
+        let sesiones = vec![
+            sesion("a", "/repo/uno", 10, 20),
+            sesion("b", "/repo/dos", 10, 20),
+        ];
+        let worktrees = vec![worktree("/repo/uno", "main"), worktree("/repo/dos", "main")];
+
+        let resultado = correlate(&procs, &sesiones, &worktrees);
+
+        let con_proceso = resultado.iter().filter(|c| c.process.is_some()).count();
+        assert_eq!(con_proceso, 1, "el proceso solo corre una de las dos");
+    }
+
+    /// Con dos candidatas, se queda con la que de verdad está en ese
+    /// directorio antes que con una descendiente.
+    #[test]
+    fn el_proceso_prefiere_la_sesion_de_su_propio_directorio() {
+        let procs = vec![proceso(100, "/repo", 0)];
+        let sesiones = vec![
+            sesion("descendiente", "/repo/sub", 10, 20),
+            sesion("exacta", "/repo", 10, 20),
+        ];
+        let worktrees = vec![worktree("/repo", "main"), worktree("/repo/sub", "otra")];
+
+        let resultado = correlate(&procs, &sesiones, &worktrees);
+        let exacta = resultado.iter().find(|c| c.session.id == "exacta").unwrap();
+
+        assert_eq!(exacta.process.as_ref().map(|p| p.pid), Some(100));
+    }
+
+    /// El reparto no puede depender del orden de recorrido de un HashMap:
+    /// dos ejecuciones con los mismos datos deben dar el mismo resultado.
+    #[test]
+    fn el_emparejamiento_es_determinista() {
+        let procs = vec![proceso(100, "/repo", 0), proceso(200, "/repo", 1)];
+        let sesiones = vec![
+            sesion("a", "/repo/uno", 10, 20),
+            sesion("b", "/repo/dos", 10, 20),
+            sesion("c", "/repo/tres", 10, 20),
+        ];
+        let worktrees = vec![
+            worktree("/repo/uno", "x"),
+            worktree("/repo/dos", "y"),
+            worktree("/repo/tres", "z"),
+        ];
+
+        let primera: Vec<_> = correlate(&procs, &sesiones, &worktrees)
+            .iter()
+            .map(|c| (c.session.id.clone(), c.process.as_ref().map(|p| p.pid)))
+            .collect();
+
+        for _ in 0..12 {
+            let otra: Vec<_> = correlate(&procs, &sesiones, &worktrees)
+                .iter()
+                .map(|c| (c.session.id.clone(), c.process.as_ref().map(|p| p.pid)))
+                .collect();
+            assert_eq!(primera, otra, "mismo dato, mismo reparto");
+        }
     }
 
     /// Review Focus #5: `git worktree remove` mientras la sesión sigue en disco.
