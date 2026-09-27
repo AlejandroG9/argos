@@ -175,6 +175,13 @@ pub fn ancho_estimado(grafo: &GrafoGit, zoom: f32) -> f32 {
 /// árbol, que es lo que se viene a ver.
 ///
 /// Devuelve el sha pulsado, si lo hubo.
+/// Qué se pulsó en el árbol. Distinguirlo importa: un commit abre su
+/// detalle, un castor lleva a la terminal de ese agente.
+pub enum Pulsado {
+    Commit(String),
+    Agente(String),
+}
+
 pub struct Pintura<'a> {
     pub estado_ramas: &'a HashMap<String, (u32, u32)>,
     pub filas: &'a [argos_core::store::SessionRow],
@@ -185,7 +192,7 @@ pub struct Pintura<'a> {
     pub zoom: f32,
 }
 
-pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> Option<String> {
+pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> Option<Pulsado> {
     let Pintura {
         estado_ramas,
         filas,
@@ -274,6 +281,7 @@ pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> O
     let cursor = respuesta.hover_pos();
     let mut pulsado = None;
     let mut bajo_el_cursor: Option<&NodoCommit> = None;
+    let mut agente_bajo_el_cursor: Option<&argos_core::store::SessionRow> = None;
 
     for n in &grafo.nodos {
         let c = punto(n);
@@ -335,6 +343,20 @@ pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> O
             } else {
                 radio_insignia
             };
+
+            // El castor es pulsable: lleva a la terminal de ese agente.
+            let radio_toque = radio_insignia * 2.2;
+            let sobre_el_castor =
+                cursor.is_some_and(|q| (q - centro_insignia).length() < radio_toque);
+
+            if sobre_el_castor {
+                agente_bajo_el_cursor = Some(agente);
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+
+                if respuesta.clicked() {
+                    pulsado = Some(Pulsado::Agente(agente.id.clone()));
+                }
+            }
 
             // Hilo vertical hasta el nodo: deja claro de quién cuelga.
             pintor.line_segment(
@@ -433,13 +455,34 @@ pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> O
             );
         }
 
-        if respuesta.clicked() && cerca {
-            pulsado = Some(n.sha.clone());
+        // El castor gana sobre el commit: está encima y es más pequeño.
+        if respuesta.clicked() && cerca && pulsado.is_none() {
+            pulsado = Some(Pulsado::Commit(n.sha.clone()));
         }
     }
 
-    // Al acercar el cursor: lo justo para identificar el commit sin taparlo.
-    if let Some(n) = bajo_el_cursor {
+    // El globo del agente tiene prioridad: si el cursor está sobre un castor,
+    // lo que interesa es él y no el commit del que cuelga.
+    if let Some(a) = agente_bajo_el_cursor {
+        egui::Tooltip::always_open(
+            ui.ctx().clone(),
+            ui.layer_id(),
+            egui::Id::new("agente-tooltip"),
+            egui::PopupAnchor::Pointer,
+        )
+        .show(|ui| {
+            ui.horizontal(|ui| {
+                let (simbolo, col) = state_badge(a.state);
+                ui.colored_label(col, simbolo);
+                ui.strong(a.client.label());
+            });
+            ui.label(crate::theme::state_label(a.state));
+            match a.warp_focus_url {
+                Some(_) => ui.weak("clic para ir a su terminal"),
+                None => ui.weak("sin pane de Warp asociada"),
+            };
+        });
+    } else if let Some(n) = bajo_el_cursor {
         egui::Tooltip::always_open(
             ui.ctx().clone(),
             ui.layer_id(),

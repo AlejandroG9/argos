@@ -509,8 +509,24 @@ impl ArgosApp {
                             zoom: self.zoom,
                         };
 
-                        if let Some(sha) = pintar_git(ui, &grafo, &mut pintura) {
-                            self.commit_abierto = Some(sha);
+                        match pintar_git(ui, &grafo, &mut pintura) {
+                            Some(crate::git_vista::Pulsado::Commit(sha)) => {
+                                self.commit_abierto = Some(sha);
+                            }
+                            Some(crate::git_vista::Pulsado::Agente(id)) => {
+                                // A la terminal de ese agente. Sin pane
+                                // asociada no hay a dónde ir, y el globo del
+                                // castor ya lo advierte antes del clic.
+                                if let Some(url) = snapshot
+                                    .rows
+                                    .iter()
+                                    .find(|r| r.id == id)
+                                    .and_then(|r| r.warp_focus_url.as_deref())
+                                {
+                                    let _ = jump_to(url);
+                                }
+                            }
+                            None => {}
                         }
                     });
                 }
