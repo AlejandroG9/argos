@@ -131,7 +131,7 @@ use std::collections::HashMap;
 
 // Dimensionados para que quepa la insignia de un agente dentro del nodo
 // sin que los puntos se toquen.
-const SEP_COMMIT: f32 = 46.0;
+const SEP_COMMIT: f32 = 76.0;
 const SEP_CARRIL: f32 = 62.0;
 const RADIO: f32 = 11.0;
 
@@ -291,7 +291,7 @@ pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> O
         // etiquetas de rama ya ocupan arriba, y darles banda propia evita
         // confundirlas con los nodos. Ancladas a la altura de su commit.
         let radio_insignia = r * 0.82;
-        let paso = radio_insignia * 2.4;
+        let paso = radio_insignia * 3.4;
         let ancho_total = paso * (agentes.len().saturating_sub(1)) as f32;
 
         for (i, agente) in agentes.iter().enumerate() {
