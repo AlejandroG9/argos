@@ -207,12 +207,26 @@ pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> O
     // primer carril necesita sitio o quedan recortadas contra el borde.
     let margen_arriba = espacio::XL * 2.0;
 
+    // Alto que el árbol necesita de verdad: carriles, más sitio arriba para
+    // las etiquetas de rama y abajo para la banda de agentes.
+    let alto_contenido =
+        (grafo.carriles.saturating_sub(1)) as f32 * sep_carril + margen_arriba + espacio::XL * 3.0;
+
+    // El lienzo llena el alto disponible aunque el árbol sea bajo. Sin esto,
+    // al agrandar la ventana queda un hueco muerto y la barra horizontal se
+    // queda pegada al contenido en vez de bajar al borde.
+    let alto = alto_contenido.max(ui.available_height() - espacio::S);
+
     let lienzo = egui::vec2(
         grafo.nodos.len() as f32 * sep_commit + espacio::XL * 4.0,
-        (grafo.carriles as f32 * sep_carril + margen_arriba + espacio::XL * 3.0).max(220.0),
+        alto,
     );
     let (respuesta, pintor) = ui.allocate_painter(lienzo, egui::Sense::click());
-    let origen = respuesta.rect.min + egui::vec2(espacio::XL, margen_arriba);
+
+    // Y con espacio de sobra, el árbol se centra en vez de quedar pegado
+    // arriba con la ventana medio vacía debajo.
+    let centrado = ((alto - alto_contenido) / 2.0).max(0.0);
+    let origen = respuesta.rect.min + egui::vec2(espacio::XL, margen_arriba + centrado);
 
     let punto = |n: &NodoCommit| -> egui::Pos2 {
         origen
