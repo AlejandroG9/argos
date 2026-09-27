@@ -2,6 +2,7 @@ mod app;
 mod git_vista;
 mod jump;
 mod logos;
+mod mascota;
 mod nodos;
 mod projects;
 mod selector;

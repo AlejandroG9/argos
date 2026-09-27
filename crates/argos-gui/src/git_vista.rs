@@ -179,6 +179,7 @@ pub struct Pintura<'a> {
     pub estado_ramas: &'a HashMap<String, (u32, u32)>,
     pub filas: &'a [argos_core::store::SessionRow],
     pub logos: &'a mut crate::logos::Logos,
+    pub mascota: &'a mut crate::mascota::Mascota,
     pub seleccionado: Option<&'a str>,
     pub now: DateTime<Utc>,
     pub zoom: f32,
@@ -189,6 +190,7 @@ pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> O
         estado_ramas,
         filas,
         logos,
+        mascota,
         seleccionado,
         now,
         zoom,
@@ -342,6 +344,38 @@ pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> O
                 ],
                 egui::Stroke::new(1.0 * zoom, color_estado.gamma_multiply(0.45)),
             );
+
+            // Con la mascota instalada, ella lleva el estado: tiene una
+            // animación propia por cada uno. El logo de plataforma queda
+            // debajo, pequeño, para saber quién es sin repetir información.
+            if let Some((tex, columnas, filas_atlas)) = mascota.textura(ui.ctx()) {
+                let tira = crate::mascota::tira_de(agente.state);
+                let fotograma = crate::mascota::fotograma_en(tira, t);
+                let uv = crate::mascota::uv_de(tira, fotograma, columnas, filas_atlas);
+
+                let alto = radio_latido * 4.2;
+                let ancho = alto * 192.0 / 208.0;
+
+                pintor.image(
+                    tex,
+                    egui::Rect::from_center_size(
+                        centro_insignia - egui::vec2(0.0, alto * 0.18),
+                        egui::vec2(ancho, alto),
+                    ),
+                    uv,
+                    egui::Color32::WHITE,
+                );
+
+                pintor.text(
+                    centro_insignia + egui::vec2(0.0, alto * 0.42),
+                    egui::Align2::CENTER_CENTER,
+                    inicial_de_cliente(agente.client),
+                    egui::FontId::proportional(10.0 * zoom),
+                    color_estado,
+                );
+
+                continue;
+            }
 
             pintor.circle_filled(centro_insignia, radio_latido, color::SUPERFICIE);
             pintor.circle_stroke(

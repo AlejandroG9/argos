@@ -67,6 +67,7 @@ pub struct ArgosApp {
     /// para no arrastrar al usuario de vuelta cada refresco.
     git_centrado: bool,
     logos: crate::logos::Logos,
+    mascota: crate::mascota::Mascota,
     zoom: f32,
     /// `None` = lista de proyectos vigilados. `Some` = dentro de ese proyecto.
     pub abierto: Option<Option<PathBuf>>,
@@ -120,6 +121,7 @@ impl ArgosApp {
             commit_abierto: None,
             git_centrado: false,
             logos: crate::logos::Logos::default(),
+            mascota: crate::mascota::Mascota::default(),
             zoom: 1.0,
             abierto,
         }
@@ -501,6 +503,7 @@ impl ArgosApp {
                             estado_ramas: &snapshot.ramas,
                             filas: &snapshot.rows,
                             logos: &mut self.logos,
+                            mascota: &mut self.mascota,
                             seleccionado: self.commit_abierto.as_deref(),
                             now,
                             zoom: self.zoom,
