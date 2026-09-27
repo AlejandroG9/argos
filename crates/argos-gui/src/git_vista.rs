@@ -131,6 +131,10 @@ use std::collections::HashMap;
 
 // Dimensionados para que quepa la insignia de un agente dentro del nodo
 // sin que los puntos se toquen.
+/// Las etiquetas de rama se dibujan encima de su commit, así que el primer
+/// carril necesita sitio o quedan recortadas contra el borde.
+const MARGEN_ARRIBA: f32 = espacio::XL * 2.0;
+
 const SEP_COMMIT: f32 = 76.0;
 const SEP_CARRIL: f32 = 62.0;
 const RADIO: f32 = 11.0;
@@ -167,6 +171,23 @@ pub fn ancho_estimado(grafo: &GrafoGit, zoom: f32) -> f32 {
     grafo.nodos.len() as f32 * SEP_COMMIT * zoom + espacio::XL * 4.0
 }
 
+/// Espacio que el árbol necesita de verdad: los carriles, más sitio arriba
+/// para las etiquetas de rama y abajo para la banda de agentes.
+pub fn alto_de_contenido(carriles: usize, zoom: f32) -> f32 {
+    (carriles.saturating_sub(1)) as f32 * SEP_CARRIL * zoom + MARGEN_ARRIBA + espacio::XL * 3.0
+}
+
+/// Alto del lienzo y cuánto bajar el árbol dentro de él.
+///
+/// Separado del pintado porque es la regla que se rompía sin que nadie se
+/// diera cuenta: el lienzo llena la ventana —si no, al agrandarla queda un
+/// hueco muerto y la barra horizontal se pega al contenido— y el sobrante se
+/// reparte arriba y abajo en vez de caer todo debajo.
+pub fn alto_y_centrado(contenido: f32, disponible: f32) -> (f32, f32) {
+    let alto = contenido.max(disponible);
+    (alto, (alto - contenido) / 2.0)
+}
+
 /// Dibuja la historia de izquierda a derecha: el tiempo avanza hacia la
 /// derecha y las ramas son carriles horizontales.
 ///
@@ -190,6 +211,9 @@ pub struct Pintura<'a> {
     pub seleccionado: Option<&'a str>,
     pub now: DateTime<Utc>,
     pub zoom: f32,
+    /// Alto útil de la ventana, medido **antes** de entrar al `ScrollArea`:
+    /// dentro, `available_height` ya no es el de la ventana.
+    pub alto_disponible: f32,
 }
 
 pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> Option<Pulsado> {
@@ -201,8 +225,9 @@ pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> O
         seleccionado,
         now,
         zoom,
+        alto_disponible,
     } = p;
-    let (now, zoom, seleccionado) = (*now, *zoom, *seleccionado);
+    let (now, zoom, seleccionado, alto_disponible) = (*now, *zoom, *seleccionado, *alto_disponible);
     // Reloj continuo de egui: mueve la animación sin depender de la hora.
     let t = ui.input(|i| i.time) as f32;
     let sep_commit = SEP_COMMIT * zoom;
@@ -212,19 +237,11 @@ pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> O
     // El más antiguo a la izquierda: se lee como se lee, hacia adelante.
     let ultimo = grafo.nodos.len().saturating_sub(1);
 
-    // Las etiquetas de rama se dibujan encima de su commit, así que el
-    // primer carril necesita sitio o quedan recortadas contra el borde.
-    let margen_arriba = espacio::XL * 2.0;
-
-    // Alto que el árbol necesita de verdad: carriles, más sitio arriba para
-    // las etiquetas de rama y abajo para la banda de agentes.
-    let alto_contenido =
-        (grafo.carriles.saturating_sub(1)) as f32 * sep_carril + margen_arriba + espacio::XL * 3.0;
-
-    // El lienzo llena el alto disponible aunque el árbol sea bajo. Sin esto,
-    // al agrandar la ventana queda un hueco muerto y la barra horizontal se
-    // queda pegada al contenido en vez de bajar al borde.
-    let alto = alto_contenido.max(ui.available_height() - espacio::S);
+    // El alto útil llega de fuera del `ScrollArea`: dentro, `available_height`
+    // no es el de la ventana, y el árbol acababa pegado arriba con media
+    // pantalla vacía debajo.
+    let alto_contenido = alto_de_contenido(grafo.carriles, zoom);
+    let (alto, centrado) = alto_y_centrado(alto_contenido, alto_disponible - espacio::S);
 
     let lienzo = egui::vec2(
         grafo.nodos.len() as f32 * sep_commit + espacio::XL * 4.0,
@@ -232,10 +249,7 @@ pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> O
     );
     let (respuesta, pintor) = ui.allocate_painter(lienzo, egui::Sense::click());
 
-    // Y con espacio de sobra, el árbol se centra en vez de quedar pegado
-    // arriba con la ventana medio vacía debajo.
-    let centrado = ((alto - alto_contenido) / 2.0).max(0.0);
-    let origen = respuesta.rect.min + egui::vec2(espacio::XL, margen_arriba + centrado);
+    let origen = respuesta.rect.min + egui::vec2(espacio::XL, MARGEN_ARRIBA + centrado);
 
     let punto = |n: &NodoCommit| -> egui::Pos2 {
         origen
@@ -319,7 +333,7 @@ pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> O
         let ancho_total = paso * (agentes.len().saturating_sub(1)) as f32;
 
         for (i, agente) in agentes.iter().enumerate() {
-            let (_, color_estado) = state_badge(agente.state);
+            let (simbolo_estado, color_estado) = state_badge(agente.state);
             let trabajando = agente.state == argos_core::model::AgentState::Working;
 
             // Un vaivén mínimo alrededor de su sitio: da señal de vida sin
@@ -378,6 +392,20 @@ pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> O
                 let alto = radio_latido * 4.2;
                 let ancho = alto * 192.0 / 208.0;
 
+                // Un suelo del color del estado bajo los pies. Sin él, el
+                // estado solo lo diría la animación, y una animación no se
+                // lee de un vistazo ni sirve a quien no distingue los tonos.
+                pintor.add(egui::Shape::Ellipse(egui::epaint::EllipseShape::filled(
+                    centro_insignia + egui::vec2(0.0, alto * 0.30),
+                    egui::vec2(ancho * 0.46, ancho * 0.15),
+                    color_estado.gamma_multiply(0.30),
+                )));
+                pintor.add(egui::Shape::Ellipse(egui::epaint::EllipseShape::stroke(
+                    centro_insignia + egui::vec2(0.0, alto * 0.30),
+                    egui::vec2(ancho * 0.46, ancho * 0.15),
+                    egui::Stroke::new(1.4 * zoom, color_estado),
+                )));
+
                 pintor.image(
                     tex,
                     egui::Rect::from_center_size(
@@ -388,11 +416,13 @@ pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> O
                     egui::Color32::WHITE,
                 );
 
+                // Símbolo del estado junto a la inicial de la plataforma: el
+                // color solo refuerza, nunca es la única señal (spec §8).
                 pintor.text(
-                    centro_insignia + egui::vec2(0.0, alto * 0.42),
+                    centro_insignia + egui::vec2(0.0, alto * 0.48),
                     egui::Align2::CENTER_CENTER,
-                    inicial_de_cliente(agente.client),
-                    egui::FontId::proportional(10.0 * zoom),
+                    format!("{simbolo_estado} {}", inicial_de_cliente(agente.client)),
+                    egui::FontId::proportional(10.5 * zoom),
                     color_estado,
                 );
 
@@ -518,6 +548,35 @@ mod tests {
             coautores: vec![],
             refs: vec![],
         }
+    }
+
+    /// Con la ventana alta, el árbol se centra en vez de quedar pegado
+    /// arriba dejando media pantalla muerta debajo. Es lo que se veía al
+    /// agrandar la ventana: el árbol arriba y un vacío enorme.
+    #[test]
+    fn con_espacio_de_sobra_el_arbol_se_centra() {
+        let contenido = alto_de_contenido(1, 1.0);
+        let disponible = contenido + 400.0;
+
+        let (alto, desplazamiento) = alto_y_centrado(contenido, disponible);
+
+        assert_eq!(alto, disponible, "el lienzo llena el alto disponible");
+        assert!(
+            (desplazamiento - 200.0).abs() < 0.5,
+            "el sobrante se reparte arriba y abajo, no todo abajo: {desplazamiento}"
+        );
+    }
+
+    /// Y con la ventana baja no se encoge ni se recorta: manda el contenido y
+    /// aparece la barra de desplazamiento.
+    #[test]
+    fn sin_espacio_manda_el_contenido_y_no_se_recorta() {
+        let contenido = alto_de_contenido(4, 1.0);
+
+        let (alto, desplazamiento) = alto_y_centrado(contenido, 50.0);
+
+        assert_eq!(alto, contenido);
+        assert_eq!(desplazamiento, 0.0);
     }
 
     fn carril_de(g: &GrafoGit, sha: &str) -> usize {

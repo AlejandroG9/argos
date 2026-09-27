@@ -6,6 +6,31 @@ use chrono::{DateTime, Utc};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+/// Lo que la barra dice de un vistazo: cuántos te esperan y cuántos trabajan,
+/// en ese orden.
+///
+/// Lo urgente va delante porque es a lo que se ha venido. Un cero no se
+/// escribe: "0 trabajando" ocupa sitio para no decir nada, y una barra llena
+/// de ceros entrena al ojo a no mirarla.
+pub fn resumen_de_estado(filas: &[SessionRow]) -> Vec<(AgentState, String)> {
+    let cuenta = |e: AgentState| filas.iter().filter(|f| f.state == e).count();
+
+    [
+        (AgentState::Waiting, cuenta(AgentState::Waiting)),
+        (AgentState::Working, cuenta(AgentState::Working)),
+    ]
+    .into_iter()
+    .filter(|(_, n)| *n > 0)
+    .map(|(estado, n)| {
+        let texto = match estado {
+            AgentState::Waiting => crate::theme::plural(n, "te espera", "te esperan"),
+            _ => format!("{n} trabajando"),
+        };
+        (estado, texto)
+    })
+    .collect()
+}
+
 /// Una fila de la pantalla de entrada: un proyecto y lo que pasa dentro.
 pub struct ProjectSummary {
     pub project: Option<PathBuf>,
@@ -87,6 +112,51 @@ pub fn summarize_projects(
 mod tests {
     use super::*;
     use argos_core::model::{ClientKind, Confidence};
+
+    /// Lo urgente primero: si algo te espera, es lo que has venido a ver.
+    #[test]
+    fn el_resumen_pone_lo_que_te_espera_por_delante_de_lo_que_trabaja() {
+        let filas = vec![
+            fila(Some("/a"), AgentState::Working),
+            fila(Some("/a"), AgentState::Waiting),
+            fila(Some("/a"), AgentState::Working),
+        ];
+
+        let r = resumen_de_estado(&filas);
+
+        assert_eq!(
+            r,
+            vec![
+                (AgentState::Waiting, "1 te espera".to_string()),
+                (AgentState::Working, "2 trabajando".to_string()),
+            ]
+        );
+    }
+
+    /// "1 te esperan" es la misma clase de descuido que "1 sesiones".
+    #[test]
+    fn el_resumen_concuerda_el_verbo_con_el_numero() {
+        let dos = vec![
+            fila(Some("/a"), AgentState::Waiting),
+            fila(Some("/a"), AgentState::Waiting),
+        ];
+
+        assert_eq!(resumen_de_estado(&dos)[0].1, "2 te esperan");
+    }
+
+    /// Un cero no se escribe: "0 trabajando" ocupa sitio para no decir nada, y
+    /// sin nada activo manda la cuenta de sesiones que pone quien llama.
+    #[test]
+    fn lo_que_vale_cero_no_aparece_y_sin_actividad_el_resumen_queda_vacio() {
+        let solo_espera = vec![fila(Some("/a"), AgentState::Waiting)];
+        assert_eq!(resumen_de_estado(&solo_espera).len(), 1);
+
+        let dormidas = vec![
+            fila(Some("/a"), AgentState::Finished),
+            fila(Some("/a"), AgentState::Unknown),
+        ];
+        assert!(resumen_de_estado(&dormidas).is_empty());
+    }
 
     fn fila(proyecto: Option<&str>, state: AgentState) -> SessionRow {
         SessionRow {

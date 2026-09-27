@@ -12,20 +12,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <defs>
     <radialGradient id="fondo" cx="50%" cy="42%" r="62%">
-      <stop offset="0%" stop-color="#20242E"/>
+      <stop offset="0%" stop-color="#212328"/>
       <stop offset="100%" stop-color="#14161A"/>
     </radialGradient>
     <radialGradient id="pupila" cx="38%" cy="34%" r="72%">
-      <stop offset="0%" stop-color="#9DB4FF"/>
-      <stop offset="60%" stop-color="#6C8CF5"/>
-      <stop offset="100%" stop-color="#4668C8"/>
+      <stop offset="0%" stop-color="#E3A96F"/>
+      <stop offset="60%" stop-color="#B87333"/>
+      <stop offset="100%" stop-color="#8A5423"/>
     </radialGradient>
   </defs>
 
   <rect width="1024" height="1024" rx="228" fill="url(#fondo)"/>
 
   <!-- Radios: del centro a cada nodo del anillo. -->
-  <g stroke="#49557094" stroke-width="16" stroke-linecap="round">
+  <g stroke="#6A5F5494" stroke-width="16" stroke-linecap="round">
     <line x1="512" y1="512" x2="842" y2="512"/>
     <line x1="512" y1="512" x2="745" y2="279"/>
     <line x1="512" y1="512" x2="512" y2="182"/>
@@ -37,10 +37,10 @@
   </g>
 
   <!-- Anillo: la órbita que une los nodos entre sí. -->
-  <circle cx="512" cy="512" r="330" fill="none" stroke="#3A4560" stroke-width="18"/>
+  <circle cx="512" cy="512" r="330" fill="none" stroke="#54493F" stroke-width="18"/>
 
   <!-- Los ocho vigías. -->
-  <g fill="#6C8CF5">
+  <g fill="#B87333">
     <circle cx="842" cy="512" r="54"/>
     <circle cx="745" cy="279" r="54"/>
     <circle cx="512" cy="182" r="54"/>

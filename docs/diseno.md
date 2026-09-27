@@ -18,16 +18,40 @@ de escritorio vive casi siempre por debajo de 64.
 |---|---|---|
 | `assets/argos-marca.svg` | 64 px en adelante | Los ocho vigías y el anillo completo |
 | `assets/argos-marca-pequena.svg` | 16 y 32 px | Cuatro nodos, trazos gruesos |
+| `assets/argos-icono.svg` | El icono del sistema | La marca **metida** en la baldosa |
 
 Ocho nodos se empastan por debajo de 48 píxeles: el anillo se convierte en una aureola
-gris y el conjunto en un borrón azul. La variante pequeña baja a cuatro nodos y engorda
-los trazos, así que conserva la silueta reconocible en vez de degradarse.
+gris y el conjunto en un borrón. La variante pequeña baja a cuatro nodos y engorda los
+trazos, así que conserva la silueta reconocible en vez de degradarse.
 
-`assets/Argos.icns` ya combina ambas por tamaño. Se genera con:
+**El icono no es la marca a secas.** La marca llena su lienzo; un icono que llena el
+suyo se ve enorme en el Dock, porque todos los demás dejan margen. `argos-icono.svg`
+pone la baldosa de 824 px dentro de un lienzo de 1024 con el radio de esquina de Big
+Sur, y escala el grafo al 0.805 para conservar las proporciones. Es lo que alimenta
+tanto el `.icns` como el icono de la ventana (`argos-icono.png`, empotrado en el
+binario).
 
-```bash
-iconutil -c icns /tmp/Argos.iconset -o assets/Argos.icns
-```
+`assets/Argos.icns` combina ambas siluetas por tamaño: la de cuatro nodos a 16 y 32, la
+completa de ahí en adelante. Se genera con `iconutil -c icns <iconset> -o
+assets/Argos.icns`.
+
+## Los tipos
+
+| Familia | Tipo | Papel |
+|---|---|---|
+| display | Instrument Serif | "Argos" y los títulos de pantalla |
+| cuerpo | IBM Plex Sans | Todo lo que se lee |
+| `fuerte` | IBM Plex Sans SemiBold | Encabezados: la jerarquía la hace el peso |
+| mono | IBM Plex Mono | Shas, rutas, hexadecimales |
+
+Viajan en el binario desde `assets/fonts/` (son OFL; las licencias están al lado). Sin
+empotrarlos, egui usa su tipo por defecto y la app se parece a cualquier otra app de
+egui en vez de a su propio diseño. Se instalan una sola vez al arrancar
+(`tipografia::instalar`): cada cambio reconstruye el atlas de glifos.
+
+Los tipos de egui quedan **detrás** de los nuestros en cada familia, no sustituidos:
+la interfaz usa ◆ ▶ ✓ ✕ ← y no todos están en Plex. Lo que falte cae en el respaldo en
+lugar de salir como un cuadrito.
 
 ## La paleta
 
@@ -55,15 +79,29 @@ Tres niveles de gris bastan. Un cuarto solo añade decisiones sin añadir inform
 Dos niveles, no cinco. La jerarquía la hace el tamaño y el peso, no un degradado de
 grises que nadie distingue.
 
-### Marca
+### Marca y acento
+
+Son **dos colores con dos trabajos**, y ahí está toda la regla:
 
 | Nombre | Hex | Papel |
 |---|---|---|
-| `ACENTO` | `#6C8CF5` | La marca. Selección activa y foco |
+| `MARCA` | `#B87333` cobre | Solo identidad: el icono, el `.icns`, la marca de la barra |
+| `ACENTO` | `#E8E3D7` hueso | Solo cromo: chip activo, selección, foco |
+| `SOBRE_ACENTO` | `#0F1114` | El texto encima de un relleno de acento |
 
-**El acento es azul por una razón concreta, no estética:** el ámbar y el verde ya
-significan algo —esperando y trabajando— y usarlos para la identidad haría que la marca
-compitiera con el estado. El azul se queda fuera del espacio semántico.
+**Por qué están separados.** El cobre comparte familia de tono con el ámbar de
+*esperando*. Como cromo interactivo competiría con él —el chip y la insignia de un
+agente que te espera acaban a dos centímetros, y el ojo tarda en decidir cuál es un
+botón y cuál un aviso—. Como identidad no llega a tocarlo nunca: el icono vive en el
+Dock y la marca vive en la barra de la pantalla de selección, donde no hay estados.
+
+**Por qué el cromo es acromático.** Sin tono no se parece a ningún estado, ni ahora ni
+cuando se añada un séptimo carril. El hueso es la única elección que no hay que volver
+a revisar cada vez que la paleta de datos crece.
+
+Las dos reglas están clavadas en tests (`theme.rs`): el acento se separa de los cuatro
+colores de estado en luminancia, y `MARCA != ACENTO`. Igualarlos reintroduciría el
+choque sin que nadie lo note.
 
 ### Estado
 

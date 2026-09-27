@@ -147,8 +147,12 @@ impl ArgosApp {
 
     fn pintar_selector(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.add_space(espacio::S);
-            ui.heading("¿Qué proyecto quieres monitorear?");
+            ui.add_space(espacio::L);
+            ui.label(
+                egui::RichText::new("¿Qué proyecto quieres monitorear?")
+                    .font(crate::tipografia::display(28.0))
+                    .color(crate::theme::color::TEXTO),
+            );
             ui.add_space(espacio::XS);
             ui.weak("Elige uno y Argos leerá solo sus registros.");
             ui.add_space(espacio::L);
@@ -156,12 +160,19 @@ impl ArgosApp {
             let mut abrir: Option<PathBuf> = None;
 
             egui::ScrollArea::vertical().show(ui, |ui| {
+                // Sin espacio entre filas: el realce de fondo al pasar el
+                // cursor ya las separa, y un hueco además las desalinea.
+                ui.spacing_mut().item_spacing.y = 0.0;
+
                 for p in &self.disponibles {
-                    let fila = ui.selectable_label(false, &p.nombre);
+                    let fila = crate::theme::fila(
+                        ui,
+                        &p.nombre,
+                        &crate::theme::ruta_corta(p.path.parent().unwrap_or(&p.path)),
+                    );
                     if fila.clicked() {
                         abrir = Some(p.path.clone());
                     }
-                    fila.on_hover_text(p.path.display().to_string());
                 }
             });
 
@@ -234,10 +245,28 @@ impl eframe::App for ArgosApp {
                         ui.heading(nombre_de_proyecto(
                             self.abierto.as_ref().and_then(|p| p.as_ref()),
                         ));
-                        ui.add_space(espacio::S);
-                        ui.weak(crate::theme::plural(sesiones, "sesión", "sesiones"));
+                        ui.add_space(espacio::M);
+                        // El hueco de la barra se gana con la respuesta a la
+                        // pregunta por la que se abre la app, no se rellena:
+                        // cuántos te esperan y cuántos trabajan.
+                        self.pintar_resumen(ui, sesiones);
                     } else {
-                        ui.heading("Argos");
+                        // La única aparición del cobre en la interfaz: la
+                        // marca junto a su nombre, en el display del diseño.
+                        let alto = ui.text_style_height(&egui::TextStyle::Heading);
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(alto, alto), egui::Sense::hover());
+                        crate::theme::pintar_marca(ui.painter(), rect.center(), alto * 0.5);
+                        ui.add_space(espacio::XS);
+                        ui.label(
+                            egui::RichText::new("Argos")
+                                .font(crate::tipografia::display(26.0))
+                                .color(crate::theme::color::TEXTO),
+                        );
+                        ui.add_space(espacio::L);
+                        // La barra de esta pantalla no tiene controles, así que
+                        // en vez de dejarla vacía dice qué promete la app.
+                        ui.weak("qué agente, de qué compañía, en qué rama");
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -251,8 +280,19 @@ impl eframe::App for ArgosApp {
                             ui.weak(format!("{:.0}%", self.zoom * 100.0));
                             ui.add_space(espacio::L);
 
-                            ui.selectable_value(&mut self.vista, Vista::Agentes, "Agentes");
-                            ui.selectable_value(&mut self.vista, Vista::Git, "Git");
+                            crate::theme::chip_valor(
+                                ui,
+                                &mut self.vista,
+                                Vista::Agentes,
+                                "Agentes",
+                            );
+                            crate::theme::chip_valor(ui, &mut self.vista, Vista::Git, "Git");
+                        } else {
+                            ui.weak(crate::theme::plural(
+                                self.disponibles.len(),
+                                "proyecto",
+                                "proyectos",
+                            ));
                         }
 
                         for aviso in self.avisos() {
@@ -269,16 +309,29 @@ impl eframe::App for ArgosApp {
                         ui.spacing_mut().item_spacing.x = espacio::XS;
                         ui.small("estado");
                         ui.add_space(espacio::XS);
-                        ui.selectable_value(&mut self.filter, Filter::Active, "activas");
-                        ui.selectable_value(&mut self.filter, Filter::NeedsAttention, "me esperan");
-                        ui.selectable_value(&mut self.filter, Filter::All, "todas");
+                        crate::theme::chip_valor(ui, &mut self.filter, Filter::Active, "activas");
+                        crate::theme::chip_valor(
+                            ui,
+                            &mut self.filter,
+                            Filter::NeedsAttention,
+                            "me esperan",
+                        );
+                        crate::theme::chip_valor(ui, &mut self.filter, Filter::All, "todas");
 
-                        ui.add_space(espacio::L);
-                        ui.small("cuándo");
-                        ui.add_space(espacio::XS);
-                        for v in [Ventana::Hoy, Ventana::Dias7, Ventana::Dias30, Ventana::Todo] {
-                            ui.selectable_value(&mut self.ventana, v, v.etiqueta());
-                        }
+                        // "cuándo" se ancla a la derecha: los dos grupos
+                        // sujetan la fila por sus extremos en vez de
+                        // amontonarse a la izquierda con medio ancho vacío.
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.spacing_mut().item_spacing.x = espacio::XS;
+                            // Invertido: este diseño coloca de derecha a
+                            // izquierda, y el orden que se lee es el de arriba.
+                            for v in [Ventana::Todo, Ventana::Dias30, Ventana::Dias7, Ventana::Hoy]
+                            {
+                                crate::theme::chip_valor(ui, &mut self.ventana, v, v.etiqueta());
+                            }
+                            ui.add_space(espacio::XS);
+                            ui.small("cuándo");
+                        });
                     });
                 }
             });
@@ -312,6 +365,34 @@ impl eframe::App for ArgosApp {
 }
 
 impl ArgosApp {
+    /// El resumen de la barra: símbolo de estado y cuenta, en su color.
+    ///
+    /// Sin nada activo cae a la cuenta de sesiones: decir "no pasa nada" con
+    /// un espacio en blanco se confunde con que la app no ha cargado.
+    fn pintar_resumen(&self, ui: &mut egui::Ui, sesiones: usize) {
+        let filas = self
+            .snapshot
+            .as_ref()
+            .map(|s| s.rows.as_slice())
+            .unwrap_or_default();
+
+        let resumen = crate::projects::resumen_de_estado(filas);
+        if resumen.is_empty() {
+            ui.weak(crate::theme::plural(sesiones, "sesión", "sesiones"));
+            return;
+        }
+
+        ui.spacing_mut().item_spacing.x = espacio::XS;
+        for (i, (estado, texto)) in resumen.iter().enumerate() {
+            if i > 0 {
+                ui.add_space(espacio::S);
+            }
+            let (simbolo, color) = state_badge(*estado);
+            ui.colored_label(color, simbolo);
+            ui.label(egui::RichText::new(texto).size(12.5).color(color));
+        }
+    }
+
     /// Lo que va mal ahora mismo, en rojo y en la barra: un sondeo muerto o
     /// un histórico que no se guarda serían invisibles de otro modo.
     fn avisos(&self) -> Vec<String> {
@@ -552,6 +633,9 @@ impl ArgosApp {
                     }
 
                     let grafo = tender_carriles(&commits);
+                    // Se mide aquí, fuera del `ScrollArea`: dentro ya no es el
+                    // alto de la ventana y el árbol quedaría pegado arriba.
+                    let alto_disponible = ui.available_height();
                     let mut area = egui::ScrollArea::both()
                         .scroll_source(egui::scroll_area::ScrollSource::ALL);
 
@@ -573,6 +657,7 @@ impl ArgosApp {
                             seleccionado: self.commit_abierto.as_deref(),
                             now,
                             zoom: self.zoom,
+                            alto_disponible,
                         };
 
                         match pintar_git(ui, &grafo, &mut pintura) {

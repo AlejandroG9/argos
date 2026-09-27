@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  El icono de macOS. No es la marca sin más: la marca llena su lienzo, y un
+  icono que llena el suyo se ve enorme junto a los demás del Dock, porque
+  todos ellos dejan margen. El sistema espera la baldosa metida en un 1024
+  transparente —824 de lado, 100 de margen— y el radio de esquina de Big Sur.
+
+  El grafo va escalado dentro de la baldosa, no recortado: la silueta es la
+  misma que la de `argos-marca.svg`, solo que cabe donde debe.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <radialGradient id="fondo" cx="50%" cy="42%" r="62%">
+      <stop offset="0%" stop-color="#212328"/>
+      <stop offset="100%" stop-color="#14161A"/>
+    </radialGradient>
+    <radialGradient id="pupila" cx="38%" cy="34%" r="72%">
+      <stop offset="0%" stop-color="#E3A96F"/>
+      <stop offset="60%" stop-color="#B87333"/>
+      <stop offset="100%" stop-color="#8A5423"/>
+    </radialGradient>
+  </defs>
+
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#fondo)"/>
+
+  <!--
+    El grafo al 0.805 (824/1024) alrededor del centro, para que conserve las
+    proporciones de la marca dentro de la baldosa más pequeña.
+  -->
+  <g transform="translate(512 512) scale(0.805) translate(-512 -512)">
+    <g stroke="#6A5F5494" stroke-width="16" stroke-linecap="round">
+      <line x1="512" y1="512" x2="842" y2="512"/>
+      <line x1="512" y1="512" x2="745" y2="279"/>
+      <line x1="512" y1="512" x2="512" y2="182"/>
+      <line x1="512" y1="512" x2="279" y2="279"/>
+      <line x1="512" y1="512" x2="182" y2="512"/>
+      <line x1="512" y1="512" x2="279" y2="745"/>
+      <line x1="512" y1="512" x2="512" y2="842"/>
+      <line x1="512" y1="512" x2="745" y2="745"/>
+    </g>
+
+    <circle cx="512" cy="512" r="330" fill="none" stroke="#54493F" stroke-width="18"/>
+
+    <g fill="#B87333">
+      <circle cx="842" cy="512" r="54"/>
+      <circle cx="745" cy="279" r="54"/>
+      <circle cx="512" cy="182" r="54"/>
+      <circle cx="279" cy="279" r="54"/>
+      <circle cx="182" cy="512" r="54"/>
+      <circle cx="279" cy="745" r="54"/>
+      <circle cx="512" cy="842" r="54"/>
+      <circle cx="745" cy="745" r="54"/>
+    </g>
+
+    <circle cx="512" cy="512" r="178" fill="url(#pupila)"/>
+    <circle cx="512" cy="512" r="178" fill="none" stroke="#14161A" stroke-width="18"/>
+    <circle cx="456" cy="456" r="40" fill="#E4E7EC" opacity="0.85"/>
+  </g>
+</svg>

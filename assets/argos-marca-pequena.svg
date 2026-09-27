@@ -7,23 +7,23 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <defs>
     <radialGradient id="p" cx="38%" cy="34%" r="72%">
-      <stop offset="0%" stop-color="#9DB4FF"/>
-      <stop offset="100%" stop-color="#5A7CE8"/>
+      <stop offset="0%" stop-color="#E3A96F"/>
+      <stop offset="100%" stop-color="#A66529"/>
     </radialGradient>
   </defs>
   <rect width="1024" height="1024" rx="228" fill="#181B22"/>
-  <g stroke="#4E5A78" stroke-width="42" stroke-linecap="round">
+  <g stroke="#6A5F54" stroke-width="42" stroke-linecap="round">
     <line x1="512" y1="512" x2="512" y2="196"/>
     <line x1="512" y1="512" x2="512" y2="828"/>
     <line x1="512" y1="512" x2="196" y2="512"/>
     <line x1="512" y1="512" x2="828" y2="512"/>
   </g>
-  <g fill="#7E9CFF">
+  <g fill="#C67F3A">
     <circle cx="512" cy="196" r="92"/>
     <circle cx="512" cy="828" r="92"/>
     <circle cx="196" cy="512" r="92"/>
     <circle cx="828" cy="512" r="92"/>
   </g>
   <circle cx="512" cy="512" r="232" fill="url(#p)" stroke="#181B22" stroke-width="40"/>
-  <circle cx="440" cy="440" r="56" fill="#EDF1FF" opacity="0.9"/>
+  <circle cx="440" cy="440" r="56" fill="#FFF3E6" opacity="0.9"/>
 </svg>
