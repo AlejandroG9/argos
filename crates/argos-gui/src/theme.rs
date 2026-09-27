@@ -13,7 +13,7 @@ pub mod color {
     pub const BORDE: Color32 = Color32::from_rgb(0x2E, 0x33, 0x3D);
     pub const TEXTO: Color32 = Color32::from_rgb(0xE4, 0xE7, 0xEC);
     pub const TEXTO_TENUE: Color32 = Color32::from_rgb(0x8B, 0x93, 0xA1);
-    pub const ACENTO: Color32 = Color32::from_rgb(0x5B, 0x8D, 0xEF);
+    pub const ACENTO: Color32 = Color32::from_rgb(0x6C, 0x8C, 0xF5);
     pub const LINEA: Color32 = Color32::from_rgb(0x39, 0x3F, 0x4B);
 }
 
@@ -154,14 +154,16 @@ pub fn aplicar_estilo(ctx: &egui::Context) {
     ctx.set_style(estilo);
 }
 
-/// Símbolo y color por estado. El símbolo es obligatorio: el color solo
+/// Símbolo y color por estado. La paleta y su porqué están en
+/// `docs/diseno.md`.
+/// El símbolo es obligatorio: el color solo
 /// refuerza, nunca es la única señal (spec §8).
 pub fn state_badge(state: AgentState) -> (&'static str, Color32) {
     match state {
-        AgentState::Waiting => ("◆", Color32::from_rgb(230, 160, 30)),
-        AgentState::Working => ("▶", Color32::from_rgb(60, 170, 110)),
-        AgentState::Unknown => ("?", Color32::from_rgb(140, 140, 150)),
-        AgentState::Finished => ("✓", Color32::from_rgb(95, 110, 130)),
+        AgentState::Waiting => ("◆", Color32::from_rgb(0xE6, 0xA0, 0x1E)),
+        AgentState::Working => ("▶", Color32::from_rgb(0x3C, 0xAA, 0x6E)),
+        AgentState::Unknown => ("?", Color32::from_rgb(0x8C, 0x8C, 0x96)),
+        AgentState::Finished => ("✓", Color32::from_rgb(0x5F, 0x6E, 0x82)),
     }
 }
 

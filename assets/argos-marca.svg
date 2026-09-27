@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Marca de Argos.
+
+  Argos Panoptes, el gigante de cien ojos que todo lo vigilaba. La marca es
+  un ojo cuyo iris es un grafo: un nodo central del que salen radios hacia
+  ocho nodos en anillo. Dice las dos cosas a la vez — lo que el nombre
+  significa y lo que la aplicación dibuja.
+
+  Sin texto a propósito: a 16 píxeles cualquier palabra se vuelve una mancha.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <radialGradient id="fondo" cx="50%" cy="42%" r="62%">
+      <stop offset="0%" stop-color="#20242E"/>
+      <stop offset="100%" stop-color="#14161A"/>
+    </radialGradient>
+    <radialGradient id="pupila" cx="38%" cy="34%" r="72%">
+      <stop offset="0%" stop-color="#9DB4FF"/>
+      <stop offset="60%" stop-color="#6C8CF5"/>
+      <stop offset="100%" stop-color="#4668C8"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1024" height="1024" rx="228" fill="url(#fondo)"/>
+
+  <!-- Radios: del centro a cada nodo del anillo. -->
+  <g stroke="#49557094" stroke-width="16" stroke-linecap="round">
+    <line x1="512" y1="512" x2="842" y2="512"/>
+    <line x1="512" y1="512" x2="745" y2="279"/>
+    <line x1="512" y1="512" x2="512" y2="182"/>
+    <line x1="512" y1="512" x2="279" y2="279"/>
+    <line x1="512" y1="512" x2="182" y2="512"/>
+    <line x1="512" y1="512" x2="279" y2="745"/>
+    <line x1="512" y1="512" x2="512" y2="842"/>
+    <line x1="512" y1="512" x2="745" y2="745"/>
+  </g>
+
+  <!-- Anillo: la órbita que une los nodos entre sí. -->
+  <circle cx="512" cy="512" r="330" fill="none" stroke="#3A4560" stroke-width="18"/>
+
+  <!-- Los ocho vigías. -->
+  <g fill="#6C8CF5">
+    <circle cx="842" cy="512" r="54"/>
+    <circle cx="745" cy="279" r="54"/>
+    <circle cx="512" cy="182" r="54"/>
+    <circle cx="279" cy="279" r="54"/>
+    <circle cx="182" cy="512" r="54"/>
+    <circle cx="279" cy="745" r="54"/>
+    <circle cx="512" cy="842" r="54"/>
+    <circle cx="745" cy="745" r="54"/>
+  </g>
+
+  <!-- Pupila: el nodo que mira. -->
+  <circle cx="512" cy="512" r="178" fill="url(#pupila)"/>
+  <circle cx="512" cy="512" r="178" fill="none" stroke="#14161A" stroke-width="18"/>
+  <circle cx="456" cy="456" r="40" fill="#E4E7EC" opacity="0.85"/>
+</svg>
