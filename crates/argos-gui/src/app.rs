@@ -2,7 +2,7 @@ use crate::git_vista::{ancho_estimado, pintar_git, tender_carriles};
 use crate::jump::jump_to;
 use crate::nodos::{construir_grafo, pintar_grafo};
 use crate::projects::{nombre_de_proyecto, summarize_projects};
-use crate::selector::{ProyectoDisponible, marcar_seleccion};
+use crate::selector::{ProyectoDisponible, filtrar_proyectos, marcar_seleccion};
 use crate::theme::{espacio, state_badge, state_label};
 use crate::ventana::Ventana;
 use argos_core::discovery::find_repos;
@@ -74,6 +74,7 @@ pub struct ArgosApp {
     zoom: f32,
     /// `None` = lista de proyectos vigilados. `Some` = dentro de ese proyecto.
     pub abierto: Option<Option<PathBuf>>,
+    selector_query: String,
 }
 
 impl ArgosApp {
@@ -128,6 +129,7 @@ impl ArgosApp {
             prompts: std::collections::HashMap::new(),
             zoom: 1.0,
             abierto,
+            selector_query: String::new(),
         }
     }
 
@@ -138,6 +140,9 @@ impl ArgosApp {
         }
 
         self.watcher.set_scope(Scope::projects(vec![path.clone()]));
+        for proyecto in &mut self.disponibles {
+            proyecto.seleccionado = proyecto.path == path;
+        }
         // Directo a sus ramas: pasar por una lista de un solo proyecto sobra.
         self.abierto = Some(Some(path));
         self.selected = None;
@@ -155,26 +160,86 @@ impl ArgosApp {
             );
             ui.add_space(espacio::XS);
             ui.weak("Elige uno y Argos leerá solo sus registros.");
-            ui.add_space(espacio::L);
+            ui.add_space(espacio::M);
 
-            let mut abrir: Option<PathBuf> = None;
+            let buscador_id = ui.make_persistent_id("buscar-proyecto");
+            if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::F)) {
+                ui.memory_mut(|m| m.request_focus(buscador_id));
+            }
 
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                // Sin espacio entre filas: el realce de fondo al pasar el
-                // cursor ya las separa, y un hueco además las desalinea.
-                ui.spacing_mut().item_spacing.y = 0.0;
+            let mut confirmar_unico = false;
+            ui.horizontal(|ui| {
+                let respuesta = egui::Frame::NONE
+                    .fill(crate::theme::color::SUPERFICIE)
+                    .stroke(egui::Stroke::new(1.0, crate::theme::color::BORDE))
+                    .corner_radius(crate::theme::REDONDEO)
+                    .inner_margin(egui::Margin::symmetric(espacio::M as i8, espacio::S as i8))
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.selector_query)
+                                .id(buscador_id)
+                                .hint_text("Buscar por nombre o ruta…")
+                                .desired_width(336.0)
+                                .frame(false),
+                        )
+                    })
+                    .inner;
+                confirmar_unico =
+                    respuesta.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                respuesta.on_hover_text("Buscar proyectos · ⌘F");
 
-                for p in &self.disponibles {
-                    let fila = crate::theme::fila(
-                        ui,
-                        &p.nombre,
-                        &crate::theme::ruta_corta(p.path.parent().unwrap_or(&p.path)),
-                    );
-                    if fila.clicked() {
-                        abrir = Some(p.path.clone());
-                    }
+                if !self.selector_query.is_empty() && ui.small_button("Limpiar").clicked() {
+                    self.selector_query.clear();
+                    ui.memory_mut(|m| m.request_focus(buscador_id));
                 }
             });
+            ui.add_space(espacio::S);
+
+            let mut abrir: Option<PathBuf> = None;
+            let visibles = filtrar_proyectos(&self.disponibles, &self.selector_query);
+
+            ui.horizontal(|ui| {
+                ui.small(if self.selector_query.trim().is_empty() {
+                    crate::theme::plural(visibles.len(), "proyecto", "proyectos")
+                } else {
+                    format!("{} de {}", visibles.len(), self.disponibles.len())
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.weak("selecciona para abrir");
+                });
+            });
+            ui.add_space(espacio::XS);
+
+            if visibles.is_empty() {
+                crate::theme::estado_vacio(
+                    ui,
+                    "No hay proyectos que coincidan",
+                    "Prueba con otro nombre o una parte de la ruta.",
+                );
+                return;
+            }
+
+            if confirmar_unico && visibles.len() == 1 {
+                abrir = Some(visibles[0].path.clone());
+            }
+
+            egui::ScrollArea::vertical()
+                .id_salt("selector-proyectos")
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = espacio::XS;
+
+                    for p in visibles {
+                        let fila = crate::theme::fila_proyecto(
+                            ui,
+                            &p.nombre,
+                            &crate::theme::ruta_corta(&p.path),
+                            p.seleccionado,
+                        );
+                        if fila.clicked() {
+                            abrir = Some(p.path.clone());
+                        }
+                    }
+                });
 
             // Fuera del recorrido: dentro habría un préstamo vivo de la lista.
             if let Some(path) = abrir {

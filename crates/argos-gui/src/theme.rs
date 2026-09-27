@@ -103,34 +103,80 @@ pub fn chip_valor<T: PartialEq>(
     resp
 }
 
-/// Una fila de lista de ancho completo: nombre a la izquierda, dato tenue a
-/// la derecha.
+/// Una fila de proyecto de ancho completo: identidad breve, nombre, ruta y
+/// una señal de navegación.
 ///
 /// El realce va en el fondo y no en un borde: un borde por fila convierte una
 /// lista en una reja, y a veinte proyectos eso es todo lo que se ve.
-pub fn fila(ui: &mut egui::Ui, nombre: &str, derecha: &str) -> egui::Response {
-    let alto = 38.0;
+pub fn fila_proyecto(ui: &mut egui::Ui, nombre: &str, ruta: &str, actual: bool) -> egui::Response {
+    let alto = 56.0;
     let (rect, resp) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), alto), egui::Sense::click());
 
-    if resp.hovered() {
+    if actual || resp.hovered() {
         ui.painter().rect_filled(rect, REDONDEO, color::SUPERFICIE);
+    }
+    if actual {
+        ui.painter().rect_stroke(
+            rect,
+            REDONDEO,
+            egui::Stroke::new(1.0, color::BORDE),
+            egui::StrokeKind::Inside,
+        );
+    }
+    if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
 
+    let icono = egui::Rect::from_center_size(
+        egui::pos2(rect.left() + espacio::L + 15.0, rect.center().y),
+        egui::vec2(30.0, 30.0),
+    );
+    ui.painter()
+        .rect_filled(icono, REDONDEO - 2.0, color::SUPERFICIE_ALTA);
+    let inicial = nombre
+        .chars()
+        .next()
+        .unwrap_or('·')
+        .to_uppercase()
+        .to_string();
     ui.painter().text(
-        egui::pos2(rect.left() + espacio::M, rect.center().y),
+        icono.center(),
+        egui::Align2::CENTER_CENTER,
+        inicial,
+        egui::FontId::new(13.0, egui::FontFamily::Proportional),
+        if actual {
+            color::ACENTO
+        } else {
+            color::TEXTO_TENUE
+        },
+    );
+
+    let x_texto = icono.right() + espacio::M;
+    ui.painter().text(
+        egui::pos2(x_texto, rect.center().y - 9.0),
         egui::Align2::LEFT_CENTER,
         nombre,
         egui::FontId::new(14.0, egui::FontFamily::Proportional),
         color::TEXTO,
     );
     ui.painter().text(
-        egui::pos2(rect.right() - espacio::M, rect.center().y),
-        egui::Align2::RIGHT_CENTER,
-        derecha,
-        egui::FontId::new(11.5, egui::FontFamily::Monospace),
+        egui::pos2(x_texto, rect.center().y + 10.0),
+        egui::Align2::LEFT_CENTER,
+        ruta,
+        egui::FontId::new(11.0, egui::FontFamily::Monospace),
         color::TEXTO_TENUE,
+    );
+    ui.painter().text(
+        egui::pos2(rect.right() - espacio::L, rect.center().y),
+        egui::Align2::RIGHT_CENTER,
+        "›",
+        egui::FontId::new(20.0, egui::FontFamily::Proportional),
+        if resp.hovered() {
+            color::TEXTO
+        } else {
+            color::TEXTO_TENUE
+        },
     );
 
     resp
