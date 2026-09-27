@@ -325,7 +325,7 @@ pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> O
 
             let centro_insignia = egui::pos2(
                 c.x - ancho_total / 2.0 + i as f32 * paso,
-                c.y + r + radio_insignia + 12.0 * zoom + vaiven,
+                c.y + r + radio_insignia + 30.0 * zoom + vaiven,
             );
 
             // Late solo si trabaja: al esperarte, quieto. El movimiento
