@@ -436,7 +436,10 @@ pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> O
             plan.push((raiz, reparto.raices[k], 0.0, radio_insignia, false));
             for (j, hijo) in hijos[k].iter().enumerate() {
                 // Medio castor del padre más medio del hijo, y un respiro.
-                let dy = (radio_insignia + radio_sub) * 2.1 + espacio::S * zoom;
+                // El respiro es generoso a propósito: pegados parecen un solo
+                // dibujo, y el hilo que los une —que es lo que cuenta de quién
+                // cuelga cada uno— no se ve si no hay hueco donde verlo.
+                let dy = (radio_insignia + radio_sub) * 2.1 + espacio::XL * zoom;
                 plan.push((hijo, reparto.subagentes[k][j], dy, radio_sub, true));
             }
         }
