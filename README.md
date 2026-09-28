@@ -1,114 +1,121 @@
 # Argos
 
-Un monitor de escritorio, en Rust, para agentes de IA que corren como CLIs.
+A native desktop monitor, written in Rust, for AI agents running as CLIs.
 
-Cuando tienes Claude Code, Codex, Gemini y Antigravity abiertos a la vez en
-varias pestañas de Warp y sobre varios proyectos, pierdes la cuenta de quién
-está haciendo qué. Argos responde a una sola pregunta, de un vistazo:
+When you have Claude Code, Codex, Gemini and Antigravity open at once across
+several Warp tabs and several projects, you lose track of who is doing what.
+Argos answers one question, at a glance:
 
-> **qué agente, de qué compañía, está trabajando en qué rama — y en qué estado.**
+> **which agent, from which company, is working on which branch — and in what
+> state.**
 
-Y te lleva a esa terminal de un clic.
+And it takes you to that terminal in one click.
 
 ![Argos](docs/capturas/argos.png)
 
-## Qué hace
+## What it does
 
-- **Cuatro plataformas.** Claude Code, Codex, Gemini CLI y Antigravity (`agy`),
-  cada una con su sonda: leen los registros que cada CLI deja en disco.
-- **Cuatro estados**, con símbolo además de color: *esperando* ◆, *trabajando* ▶,
-  *desconocido* ?, *terminó* ✓. El símbolo es obligatorio — un indicador que
-  depende solo del color no es un indicador.
-- **Vista de git**: la historia de izquierda a derecha, las ramas como carriles,
-  y colgando de la punta de cada rama los agentes que trabajan en ella ahora.
-- **Vista de agentes**: la jerarquía de sesiones y subagentes.
-- **Salto a la terminal**: un clic en un agente abre su pane de Warp.
-- **Atribución**: al pulsar un commit, qué conversaciones lo mencionan, quién
-  firma como coautor y la petición que lo originó — el porqué, que no está en
-  git.
-- **Filtro temporal** (hoy / 7 días / 30 días / todo) y por estado.
+- **Four platforms.** Claude Code, Codex, Gemini CLI and Antigravity (`agy`),
+  each with its own probe, reading the logs every CLI leaves on disk.
+- **Four states**, carrying a symbol as well as a colour: *waiting* ◆,
+  *working* ▶, *unknown* ?, *finished* ✓. The symbol is not optional — an
+  indicator that depends on colour alone is not an indicator.
+- **Git view**: history running left to right, branches as lanes, and the
+  agents currently working on a branch hanging from its tip.
+- **Agent view**: the hierarchy of sessions and subagents.
+- **Jump to the terminal**: clicking an agent opens its Warp pane.
+- **Attribution**: click a commit to see which conversations mention it, who
+  signed as co-author, and the prompt that led to it — the *why*, which git
+  does not record.
+- **Time filter** (today / 7 days / 30 days / all) and state filter.
 
-## Lo que Argos *no* hace
+## What Argos does *not* do
 
-No controla a los agentes: no responde por ti, no los pausa ni los mata. Observa
-y te lleva allí. El control es una fase posterior, deliberadamente.
+It does not control the agents: it will not reply for you, pause them or kill
+them. It watches, and it takes you there. Control is a later phase, on purpose.
 
-No adivina. Cuando la correlación entre un proceso y una sesión es dudosa, lo
-dice: cada inferencia lleva un nivel de confianza explícito, porque ninguna de
-las plataformas mantiene abierto su archivo de sesión y la correlación es, por
-fuerza, heurística.
+It does not guess. When the correlation between a process and a session is
+doubtful, it says so: every inference carries an explicit confidence level,
+because none of these platforms keeps its session file open and the correlation
+is necessarily heuristic.
 
-## Cómo funciona
+## How it works
 
-Un hilo de fondo sondea cada 3 segundos y publica una instantánea; la interfaz
-nunca se bloquea leyendo disco. Las sondas filtran por proyecto *antes* de
-parsear: sin eso, un sondeo completo de la máquina costaba 1,65 s y bloqueaba
-la ventana.
+A background thread polls every 3 seconds and publishes a snapshot; the UI
+never blocks on disk. Probes filter by project *before* parsing — without that,
+a full scan of the machine cost 1.65 s and froze the window.
 
-SQLite es un **índice derivado**, no la fuente de la verdad: si el esquema
-cambia, se reconstruye desde los registros. La única tabla que no se puede
-reconstruir es la de proyectos vigilados.
+SQLite is a **derived index**, not the source of truth: if the schema changes,
+it is rebuilt from the logs. The only table that cannot be reconstructed is the
+list of watched projects.
 
 ```
-crates/argos-core   el núcleo, sin interfaz: sondas, correlación, estado, git
-crates/argos-gui    eframe/egui: el árbol, los nodos, el tema
+crates/argos-core   the core, no UI: probes, correlation, state, git
+crates/argos-gui    eframe/egui: the tree, the nodes, the theme
 ```
 
-## Requisitos
+## Requirements
 
-- macOS (usa `warp://` y `ps` de BSD)
-- Rust estable, edición 2024
-- [Warp](https://www.warp.dev/) para el salto a la sesión
+- macOS (it uses `warp://` and BSD `ps`)
+- Rust stable, edition 2024
+- [Warp](https://www.warp.dev/) for the jump-to-session feature
 
-## Construir y ejecutar
+## Build and run
 
 ```bash
 cargo run --release -p argos-gui
 ```
 
-## Personalizar
+## Customising
 
-- **Logotipos de plataforma.** Son marcas de terceros y no viajan con la app.
-  Deja PNGs en `~/.argos/logos/` (`claude.png`, `codex.png`, `gemini.png`,
-  `agy.png`); si no están, se usa la inicial.
-- **Mascota.** Si dejas un atlas de sprites en `~/.argos/mascota/` con su
-  `atlas.json`, anima el estado de cada agente.
+- **Platform logos.** These are third-party trademarks and do not ship with the
+  app. Drop PNGs into `~/.argos/logos/` (`claude.png`, `codex.png`,
+  `gemini.png`, `agy.png`); without them, Argos falls back to an initial.
+- **Mascot.** Drop a sprite atlas into `~/.argos/mascota/` along with its
+  `atlas.json` and it will animate each agent's state.
 
-## Diseño
+## Design
 
-`docs/diseno.md` explica la marca, la paleta y por qué cada color tiene un
-papel. Resumen: el cobre es **solo** identidad y el cromo interactivo es hueso
-acromático, porque el ámbar y el verde ya significan *esperando* y *trabajando*
-y un acento que se lee como un estado es un error de lectura esperando a
-ocurrir. Hay tests que sujetan esa regla.
+`docs/diseno.md` (in Spanish) covers the mark, the palette, and why each colour
+has exactly one job. The short version: copper is **identity only** and the
+interactive chrome is achromatic bone, because amber and green already mean
+*waiting* and *working*, and an accent that reads as a state is a misreading
+waiting to happen. Tests hold that rule in place.
 
-## Privacidad
+## Privacy
 
-Argos **solo lee**. No envía nada a ninguna parte: no hay red en el núcleo.
+Argos **only reads**. It sends nothing anywhere: there is no networking in the
+core.
 
-Dicho eso, conviene que sepas lo que ya era cierto antes de instalarlo: los
-registros de sesión de estas CLIs son texto plano sin cifrar en tu carpeta
-personal, y pueden contener lo que hayas pegado en una conversación o lo que un
-agente haya impreso con `cat .env`. Argos los lee; no los copia ni los expone.
+That said, something worth knowing that was already true before you installed
+it: the session logs these CLIs write are unencrypted plain text in your home
+directory, and they can contain whatever you pasted into a conversation or
+whatever an agent printed with `cat .env`. Argos reads them; it does not copy
+or expose them.
 
-## Licencia
+## Licence
 
 [MIT](LICENSE).
 
-Las **tipografías son aparte**: IBM Plex Sans, IBM Plex Mono e Instrument Serif
-están bajo [SIL Open Font License](https://openfontlicense.org/), y su licencia
-viaja junto a los archivos en `assets/fonts/`. La MIT cubre el código, no ellas.
+The **fonts are separate**: IBM Plex Sans, IBM Plex Mono and Instrument Serif
+are under the [SIL Open Font License](https://openfontlicense.org/), and that
+licence travels next to the files in `assets/fonts/`. MIT covers the code, not
+them.
 
-Los **logotipos de las plataformas** (Anthropic, OpenAI, Google) no están en
-este repositorio: son marcas de terceros. Si los quieres, los pones tú en
+The **platform logos** (Anthropic, OpenAI, Google) are not in this repository —
+they are third-party trademarks. If you want them, you supply them in
 `~/.argos/logos/`.
 
-## Estado
+## Status
 
-En desarrollo activo. Funciona y se usa a diario, pero la superficie cambia.
+Under active development. It works and gets daily use, but the surface changes.
 
-Una advertencia honesta: el salto a la terminal depende de `WARP_FOCUS_URL` y
-del esquema `warp://session/<uuid>`, que son una interfaz **observada** de un
-producto cerrado, no documentada ni estable. Warp puede cambiarla en cualquier
-versión. Está aislada en `jump.rs` y en la sonda de procesos para que, si eso
-pasa, se arregle en un sitio.
+One honest warning: the jump-to-terminal feature depends on `WARP_FOCUS_URL`
+and the `warp://session/<uuid>` scheme, which are an **observed** interface of
+a closed product — neither documented nor stable. Warp can change it in any
+release. It is isolated in `jump.rs` and the process probe so that when that
+happens, there is one place to fix.
+
+---
+
+Source comments, commit messages and design docs are in Spanish.
