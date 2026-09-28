@@ -45,6 +45,20 @@ pub fn correlate(
             if !session.anchor_path.starts_with(cwd) {
                 continue;
             }
+            // …pero el ancestro tiene que seguir siendo el mismo repositorio.
+            //
+            // Sin esto, un agente lanzado en la carpeta que contiene todos los
+            // proyectos es ancestro de todos y elegible para cada sesión de
+            // cada uno: Orion mostraba dos agentes trabajando teniendo uno.
+            //
+            // Si no se conoce el repositorio de la sesión no se inventa nada y
+            // manda la regla de arriba: quedarse sin correlacionar por un
+            // descubrimiento incompleto sería peor que correlacionar de más.
+            if let Some(repo) = worktree_containing(worktrees, &session.anchor_path)
+                && !cwd.starts_with(&repo.repo_root)
+            {
+                continue;
+            }
             // Un proceso que arrancó después de la última actividad no pudo
             // haberla producido.
             if proc.started_at > session.last_activity {
@@ -170,6 +184,48 @@ mod tests {
 
     fn t(offset_secs: i64) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 9, 26, 12, 0, 0).unwrap() + Duration::seconds(offset_secs)
+    }
+
+    /// Un agente lanzado en la carpeta que contiene *todos* los proyectos no
+    /// está trabajando en ninguno en concreto, y desde luego no en todos a la
+    /// vez. Sin esta regla, un `claude` en ~/Proyectos era elegible para cada
+    /// sesión de cada proyecto de debajo y reclamaba una: Orion mostraba dos
+    /// agentes trabajando teniendo uno solo.
+    #[test]
+    fn un_proceso_del_directorio_padre_no_reclama_sesiones_de_los_proyectos() {
+        let dentro = ProcessObservation {
+            cwd: Some(PathBuf::from("/proyectos/orion")),
+            ..proceso(63062, "/proyectos/orion", 0)
+        };
+        let fuera = ProcessObservation {
+            cwd: Some(PathBuf::from("/proyectos")),
+            ..proceso(24569, "/proyectos", 0)
+        };
+
+        let sesiones = vec![
+            sesion("viva", "/proyectos/orion", 10, 20),
+            sesion("vieja", "/proyectos/orion", 5, 15),
+        ];
+        let worktrees = vec![Worktree {
+            path: PathBuf::from("/proyectos/orion"),
+            branch: Some("main".into()),
+            repo_root: PathBuf::from("/proyectos/orion"),
+        }];
+
+        let r = correlate(&[dentro, fuera], &sesiones, &worktrees);
+
+        let con_proceso = r.iter().filter(|c| c.process.is_some()).count();
+        assert_eq!(
+            con_proceso, 1,
+            "solo el proceso que corre dentro del repo puede reclamar una sesión"
+        );
+        assert_eq!(
+            r.iter()
+                .find(|c| c.process.is_some())
+                .and_then(|c| c.process.as_ref())
+                .map(|p| p.pid),
+            Some(63062)
+        );
     }
 
     fn proceso(pid: u32, cwd: &str, arranque: i64) -> ProcessObservation {

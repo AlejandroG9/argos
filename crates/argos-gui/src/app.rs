@@ -713,6 +713,12 @@ impl ArgosApp {
                     }
 
                     let grafo = tender_carriles(&commits);
+                    // Solo las sesiones de *este* proyecto, como ya hacía la
+                    // vista de agentes. Las insignias se buscan por nombre de
+                    // rama, y "main" no identifica nada por sí solo: sin este
+                    // filtro, una sesión de otro proyecto en una rama que se
+                    // llame igual se dibuja aquí.
+                    let filas_aqui = self.filas_del_proyecto(&project, snapshot);
                     // Se mide aquí, fuera del `ScrollArea`: dentro ya no es el
                     // alto de la ventana y el árbol quedaría pegado arriba.
                     let alto_disponible = ui.available_height();
@@ -731,7 +737,7 @@ impl ArgosApp {
                     area.show(ui, |ui| {
                         let mut pintura = crate::git_vista::Pintura {
                             estado_ramas: &snapshot.ramas,
-                            filas: &snapshot.rows,
+                            filas: &filas_aqui,
                             logos: &mut self.logos,
                             mascota: &mut self.mascota,
                             seleccionado: self.commit_abierto.as_deref(),

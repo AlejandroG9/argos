@@ -89,18 +89,37 @@ pub fn tender_carriles(commits: &[Commit]) -> GrafoGit {
     grafo
 }
 
-/// Nombres de rama presentables: `main` y `origin/main` son la misma rama
-/// para quien mira, así que se colapsan en una etiqueta. `HEAD` y las
-/// etiquetas de versión no son ramas.
+/// Nombres de rama presentables. `HEAD` y las etiquetas de versión no son
+/// ramas.
+///
+/// El remoto **no** se hace pasar por la rama local. Cuando los dos apuntan
+/// al mismo commit sobra decirlo dos veces y se queda solo el local; pero si
+/// la local va por delante caen en commits distintos, y renombrar
+/// `origin/main` a `main` etiquetaba los dos igual. Como los agentes se
+/// buscan por nombre de rama, los mismos acababan dibujados en ambos: un
+/// agente parecía dos.
 pub fn nombres_de_rama(refs: &[String]) -> Vec<String> {
-    let mut vistos = Vec::new();
+    let locales: HashSet<&str> = refs
+        .iter()
+        .map(|r| r.trim())
+        .filter(|r| !r.starts_with("tag: ") && !r.starts_with("origin/"))
+        .collect();
+
+    let mut vistos: Vec<String> = Vec::new();
 
     for r in refs {
-        if r.starts_with("tag: ") {
+        let nombre = r.trim();
+        if nombre.is_empty() || nombre == "HEAD" || nombre.starts_with("tag: ") {
             continue;
         }
-        let nombre = r.strip_prefix("origin/").unwrap_or(r).trim();
-        if nombre.is_empty() || nombre == "HEAD" {
+        // `origin/HEAD` es un puntero al remoto por defecto, no una rama.
+        if nombre == "origin/HEAD" {
+            continue;
+        }
+        // El remoto sobra solo si su local está en este mismo commit.
+        if let Some(sin_remoto) = nombre.strip_prefix("origin/")
+            && locales.contains(sin_remoto)
+        {
             continue;
         }
         if !vistos.iter().any(|v| v == nombre) {
@@ -577,6 +596,33 @@ mod tests {
 
         assert_eq!(alto, contenido);
         assert_eq!(desplazamiento, 0.0);
+    }
+
+    /// Con la rama local por delante del remoto, `main` y `origin/main` caen
+    /// en commits distintos. Colapsar los dos a "main" etiquetaba ambos igual
+    /// y, como los agentes se buscan por nombre de rama, los mismos castores
+    /// se dibujaban en los dos: un agente parecía dos.
+    #[test]
+    fn el_remoto_rezagado_no_se_hace_pasar_por_la_rama_local() {
+        // Tal y como los entrega `parse_refs`, que ya desdobla "HEAD -> ".
+        let local = nombres_de_rama(&["main".into(), "feat/f30".into()]);
+        let remoto = nombres_de_rama(&["origin/main".into(), "origin/HEAD".into()]);
+
+        assert_eq!(local, vec!["main".to_string(), "feat/f30".to_string()]);
+        assert_eq!(
+            remoto,
+            vec!["origin/main".to_string()],
+            "un commit que solo tiene el remoto no es la punta de la rama local"
+        );
+    }
+
+    /// Cuando local y remoto están al día comparten commit, y ahí sí sobra
+    /// decirlo dos veces: una etiqueta basta.
+    #[test]
+    fn local_y_remoto_al_dia_se_dicen_una_sola_vez() {
+        let r = nombres_de_rama(&["main".into(), "origin/main".into()]);
+
+        assert_eq!(r, vec!["main".to_string()]);
     }
 
     fn carril_de(g: &GrafoGit, sha: &str) -> usize {
