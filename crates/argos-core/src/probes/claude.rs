@@ -130,7 +130,15 @@ pub fn parse_session(
         ActivitySemantics::ToolCallPending
     } else if last_role.as_deref() == Some("assistant") {
         ActivitySemantics::AssistantTurnEnded
+    } else if last_role.as_deref() == Some("user") {
+        // Aquí caía Orion. La conversación alterna: si el último turno es
+        // del usuario, el asistente debe una respuesta. Da igual que sea un
+        // prompt humano o un tool_result devuelto al modelo —los dos llegan
+        // con `role: "user"`— porque para el estado significan lo mismo.
+        ActivitySemantics::UserTurnEnded
     } else {
+        // Sin ningún turno legible: un archivo vacío, truncado o que solo
+        // trae apuntes internos. Esto sí es no saber.
         ActivitySemantics::Indeterminate
     };
 
@@ -310,6 +318,51 @@ mod tests {
         assert_eq!(
             obs.anchor_path,
             PathBuf::from("/Users/alex/Proyectos/Orion/.worktrees/adam-slm")
+        );
+    }
+
+    /// Copiada de una sesión real de Orion que el tablero no mostraba.
+    ///
+    /// La herramienta devolvió su resultado y el asistente aún no ha
+    /// contestado. Ese resultado llega como una entrada `role: "user"` —igual
+    /// que un prompt humano— y detrás vienen entradas de contabilidad
+    /// (`attachment`, `queue-operation`, `mode`) que no son turnos de nadie.
+    /// La sonda daba Indeterminate y el estado caía a Unknown, que el filtro
+    /// por defecto esconde: proceso vivo, sesión reciente, tablero vacío.
+    #[test]
+    fn un_resultado_de_herramienta_deja_el_turno_en_manos_del_asistente() {
+        let obs = parse_session(
+            &leer("turno-del-usuario.jsonl"),
+            Path::new("/x/s.jsonl"),
+            "s".into(),
+            None,
+        )
+        .expect("debe parsear");
+
+        assert_eq!(obs.activity, ActivitySemantics::UserTurnEnded);
+        assert_eq!(
+            obs.anchor_path,
+            PathBuf::from("/Users/alex/Proyectos/Orion")
+        );
+    }
+
+    /// Las entradas de contabilidad del final no deben mover el reloj: la
+    /// última actividad es la del último turno real, no la del apunte
+    /// interno que Claude Code escribió después.
+    #[test]
+    fn la_contabilidad_del_final_no_cuenta_como_turno() {
+        let obs = parse_session(
+            &leer("turno-del-usuario.jsonl"),
+            Path::new("/x/s.jsonl"),
+            "s".into(),
+            None,
+        )
+        .expect("debe parsear");
+
+        assert_eq!(
+            obs.last_activity.to_rfc3339(),
+            "2026-09-27T21:42:11+00:00",
+            "el reloj debe pararse en el tool_result, no en el attachment"
         );
     }
 

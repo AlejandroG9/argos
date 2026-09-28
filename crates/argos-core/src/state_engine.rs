@@ -33,6 +33,9 @@ pub fn infer(
             (AgentState::Finished, Confidence::High)
         }
         ActivitySemantics::AssistantTurnEnded => (AgentState::Waiting, Confidence::High),
+        // El turno es suyo y hay proceso vivo: está contestando, por mucho
+        // que el archivo lleve rato quieto. Un modelo pensando no escribe.
+        ActivitySemantics::UserTurnEnded => (AgentState::Working, Confidence::High),
         ActivitySemantics::Indeterminate if idle < idle_threshold => {
             (AgentState::Working, Confidence::Low)
         }
@@ -54,6 +57,49 @@ mod tests {
 
     fn t(offset: i64) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 9, 26, 12, 0, 0).unwrap() + Duration::seconds(offset)
+    }
+
+    /// El caso que hizo desaparecer Orion del tablero: una herramienta
+    /// devolvió su resultado, el asistente aún no ha contestado, y el archivo
+    /// lleva más de medio minuto quieto porque el modelo está pensando.
+    /// Antes caía en Indeterminate y de ahí a Unknown, que el filtro
+    /// "activas" esconde: la sesión existía, el proceso estaba vivo, y aun
+    /// así el tablero decía que no pasaba nada.
+    #[test]
+    fn si_el_ultimo_turno_es_del_usuario_el_agente_debe_una_respuesta() {
+        let c = caso(ActivitySemantics::UserTurnEnded, true, 0);
+
+        // 300 s de silencio: el modelo puede tardar. El tiempo no manda
+        // cuando la semántica ya dice de quién es el turno.
+        let (estado, confianza) = infer(&c, t(300), DEFAULT_IDLE_THRESHOLD);
+
+        assert_eq!(estado, AgentState::Working);
+        assert_eq!(confianza, Confidence::High);
+    }
+
+    /// Un subagente que recibe un resultado de herramienta tampoco terminó:
+    /// le toca contestar a él, igual que a uno raíz.
+    #[test]
+    fn un_subagente_con_el_turno_del_usuario_abierto_sigue_trabajando() {
+        let mut c = caso(ActivitySemantics::UserTurnEnded, true, 0);
+        c.session.parent_id = Some("padre".into());
+
+        assert_eq!(
+            infer(&c, t(300), DEFAULT_IDLE_THRESHOLD).0,
+            AgentState::Working
+        );
+    }
+
+    /// Y sin proceso vivo manda el proceso: por muy abierto que quedara el
+    /// turno, nadie va a contestarlo.
+    #[test]
+    fn el_turno_del_usuario_abierto_no_revive_una_sesion_muerta() {
+        let c = caso(ActivitySemantics::UserTurnEnded, false, 0);
+
+        assert_eq!(
+            infer(&c, t(300), DEFAULT_IDLE_THRESHOLD).0,
+            AgentState::Finished
+        );
     }
 
     fn caso(activity: ActivitySemantics, vivo: bool, ultima_actividad: i64) -> Correlated {

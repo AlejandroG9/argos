@@ -31,6 +31,13 @@ pub enum ActivitySemantics {
     ToolCallPending,
     /// El asistente cerró turno. Está esperando al usuario.
     AssistantTurnEnded,
+    /// El turno quedó del lado del usuario y el asistente debe una respuesta.
+    ///
+    /// Son dos cosas que en el registro se ven idénticas —ambas llegan como
+    /// `role: "user"`— y significan lo mismo para el estado: un prompt que la
+    /// persona acaba de escribir, y un `tool_result` devuelto al modelo. En
+    /// los dos casos le toca contestar al agente, así que está trabajando.
+    UserTurnEnded,
     /// La plataforma no expone detalle suficiente para distinguir.
     Indeterminate,
 }

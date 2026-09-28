@@ -1,0 +1,8 @@
+{"type":"user","cwd":"/Users/alex/Proyectos/Orion","gitBranch":"main","timestamp":"2026-09-27T21:40:00.000Z","message":{"role":"user","content":[{"type":"text","text":"corre los tests"}]}}
+{"type":"assistant","cwd":"/Users/alex/Proyectos/Orion","gitBranch":"main","timestamp":"2026-09-27T21:41:00.000Z","message":{"role":"assistant","usage":{"input_tokens":5,"output_tokens":8,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens_details":{"thinking_tokens":0}},"content":[{"type":"tool_use","id":"toolu_01","name":"Bash","input":{"command":"cargo test"}}]}}
+{"type":"user","cwd":"/Users/alex/Proyectos/Orion","gitBranch":"main","timestamp":"2026-09-27T21:42:11.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"test result: ok. 120 passed"}]}}
+{"type":"attachment","timestamp":"2026-09-27T21:42:11.000Z"}
+{"type":"queue-operation","timestamp":"2026-09-27T21:42:11.000Z"}
+{"type":"mode"}
+{"type":"permission-mode"}
+{"type":"atis-latch"}
