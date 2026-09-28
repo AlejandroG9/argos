@@ -91,12 +91,24 @@ registros de sesión de estas CLIs son texto plano sin cifrar en tu carpeta
 personal, y pueden contener lo que hayas pegado en una conversación o lo que un
 agente haya impreso con `cat .env`. Argos los lee; no los copia ni los expone.
 
-## Tipografías
+## Licencia
 
-IBM Plex Sans y IBM Plex Mono, e Instrument Serif. Todas bajo
-[SIL Open Font License](https://openfontlicense.org/); las licencias viajan
-junto a los archivos en `assets/fonts/`.
+[MIT](LICENSE).
+
+Las **tipografías son aparte**: IBM Plex Sans, IBM Plex Mono e Instrument Serif
+están bajo [SIL Open Font License](https://openfontlicense.org/), y su licencia
+viaja junto a los archivos en `assets/fonts/`. La MIT cubre el código, no ellas.
+
+Los **logotipos de las plataformas** (Anthropic, OpenAI, Google) no están en
+este repositorio: son marcas de terceros. Si los quieres, los pones tú en
+`~/.argos/logos/`.
 
 ## Estado
 
 En desarrollo activo. Funciona y se usa a diario, pero la superficie cambia.
+
+Una advertencia honesta: el salto a la terminal depende de `WARP_FOCUS_URL` y
+del esquema `warp://session/<uuid>`, que son una interfaz **observada** de un
+producto cerrado, no documentada ni estable. Warp puede cambiarla en cualquier
+versión. Está aislada en `jump.rs` y en la sonda de procesos para que, si eso
+pasa, se arregle en un sitio.
