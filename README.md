@@ -1,5 +1,7 @@
 # Argos
 
+*[Léeme en español](README.es.md)*
+
 A native desktop monitor, written in Rust, for AI agents running as CLIs.
 
 When you have Claude Code, Codex, Gemini and Antigravity open at once across
@@ -118,4 +120,5 @@ happens, there is one place to fix.
 
 ---
 
-Source comments, commit messages and design docs are in Spanish.
+Source comments, commit messages and design docs are in Spanish. So is
+[README.es.md](README.es.md), which is the original.
