@@ -394,9 +394,14 @@ pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> O
         // etiquetas de rama ya ocupan arriba, y darles banda propia evita
         // confundirlas con los nodos. Ancladas a la altura de su commit.
         let radio_insignia = r * 0.82;
-        let radio_sub = radio_insignia * 0.62;
-        let paso = radio_insignia * 3.4;
-        let paso_sub = radio_sub * 3.0;
+        // 0.72 y no menos: por debajo de ahí el sprite deja de leerse y el
+        // castor pequeño se vuelve una mancha marrón.
+        let radio_sub = radio_insignia * 0.72;
+        // El castor mide `radio * 4.2` de alto y casi otro tanto de ancho,
+        // así que las separaciones salen de su tamaño dibujado y no del radio
+        // pelado: con el radio a secas se solapaban entre ellos.
+        let paso = radio_insignia * 4.4;
+        let paso_sub = radio_sub * 4.4;
 
         // Un subagente cuelga de su padre, no del commit: no trabaja en la
         // rama por su cuenta, trabaja para alguien. Y si su padre no está a
@@ -430,7 +435,8 @@ pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> O
         for (k, raiz) in raices.iter().enumerate() {
             plan.push((raiz, reparto.raices[k], 0.0, radio_insignia, false));
             for (j, hijo) in hijos[k].iter().enumerate() {
-                let dy = radio_insignia * 2.0 + radio_sub * 2.2;
+                // Medio castor del padre más medio del hijo, y un respiro.
+                let dy = (radio_insignia + radio_sub) * 2.1 + espacio::S * zoom;
                 plan.push((hijo, reparto.subagentes[k][j], dy, radio_sub, true));
             }
         }
@@ -458,7 +464,8 @@ pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> O
                         .iter()
                         .position(|raiz| Some(raiz.id.as_str()) == agente.parent_id.as_deref())
                         .unwrap_or(0)],
-                    base_y + radio_insignia,
+                    // De los pies del padre, no de su centro.
+                    base_y + radio_insignia * 1.34,
                 )
             } else {
                 egui::pos2(c.x, c.y + r)
@@ -498,9 +505,7 @@ pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> O
             // Con la mascota instalada, ella lleva el estado: tiene una
             // animación propia por cada uno. El logo de plataforma queda
             // debajo, pequeño, para saber quién es sin repetir información.
-            if let Some((tex, columnas, filas_atlas)) =
-                (!es_subagente).then(|| mascota.textura(ui.ctx())).flatten()
-            {
+            if let Some((tex, columnas, filas_atlas)) = mascota.textura(ui.ctx()) {
                 let tira = crate::mascota::tira_de(agente.state);
                 let fotograma = crate::mascota::fotograma_en(tira, t);
                 let uv = crate::mascota::uv_de(tira, fotograma, columnas, filas_atlas);
