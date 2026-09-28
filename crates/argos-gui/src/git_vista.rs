@@ -184,6 +184,52 @@ pub fn agentes_en_punta<'a>(
         .collect()
 }
 
+/// Dónde va cada insignia, en desplazamiento horizontal desde el commit.
+pub struct Reparto {
+    /// Un desplazamiento por agente raíz.
+    pub raices: Vec<f32>,
+    /// Los desplazamientos de los subagentes de cada raíz, en el mismo orden.
+    pub subagentes: Vec<Vec<f32>>,
+}
+
+/// Reparte el ancho de la banda entre los agentes raíz y sus subagentes.
+///
+/// Separado del pintado porque es aritmética, y la aritmética de una
+/// disposición se comprueba sin abrir una ventana. La regla: cada raíz
+/// reserva el ancho que ocupan sus hijos —o el paso mínimo si no tiene— y
+/// el conjunto se centra bajo el commit. Sin reservar por subárbol, los
+/// hijos de una raíz se meten debajo de la vecina y deja de saberse de quién
+/// cuelga cada uno.
+pub fn repartir(subs_por_raiz: &[usize], paso_raiz: f32, paso_sub: f32) -> Reparto {
+    let anchos: Vec<f32> = subs_por_raiz
+        .iter()
+        .map(|n| (*n as f32 * paso_sub).max(paso_raiz))
+        .collect();
+
+    let total: f32 = anchos.iter().sum();
+    let mut borde = -total / 2.0;
+
+    let mut raices = Vec::with_capacity(anchos.len());
+    let mut subagentes = Vec::with_capacity(anchos.len());
+
+    for (ancho, n) in anchos.iter().zip(subs_por_raiz) {
+        let centro = borde + ancho / 2.0;
+        raices.push(centro);
+
+        // Los hijos se centran bajo su padre, con el del medio a plomo.
+        let extremo = (*n as f32 - 1.0) / 2.0;
+        subagentes.push(
+            (0..*n)
+                .map(|i| centro + (i as f32 - extremo) * paso_sub)
+                .collect(),
+        );
+
+        borde += ancho;
+    }
+
+    Reparto { raices, subagentes }
+}
+
 /// Ancho que ocupará el grafo, para poder abrir la vista por su extremo
 /// derecho sin recurrir a un desplazamiento infinito.
 pub fn ancho_estimado(grafo: &GrafoGit, zoom: f32) -> f32 {
@@ -348,10 +394,48 @@ pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> O
         // etiquetas de rama ya ocupan arriba, y darles banda propia evita
         // confundirlas con los nodos. Ancladas a la altura de su commit.
         let radio_insignia = r * 0.82;
+        let radio_sub = radio_insignia * 0.62;
         let paso = radio_insignia * 3.4;
-        let ancho_total = paso * (agentes.len().saturating_sub(1)) as f32;
+        let paso_sub = radio_sub * 3.0;
 
-        for (i, agente) in agentes.iter().enumerate() {
+        // Un subagente cuelga de su padre, no del commit: no trabaja en la
+        // rama por su cuenta, trabaja para alguien. Y si su padre no está a
+        // la vista se trata como raíz, porque colgarlo de nadie lo dejaría
+        // flotando sin explicar de dónde sale.
+        let presentes: HashSet<&str> = agentes.iter().map(|a| a.id.as_str()).collect();
+        let raices: Vec<&argos_core::store::SessionRow> = agentes
+            .iter()
+            .copied()
+            .filter(|a| {
+                a.parent_id
+                    .as_deref()
+                    .is_none_or(|padre| !presentes.contains(padre))
+            })
+            .collect();
+        let hijos: Vec<Vec<&argos_core::store::SessionRow>> = raices
+            .iter()
+            .map(|raiz| {
+                agentes
+                    .iter()
+                    .copied()
+                    .filter(|a| a.parent_id.as_deref() == Some(raiz.id.as_str()))
+                    .collect()
+            })
+            .collect();
+
+        let cuentas: Vec<usize> = hijos.iter().map(Vec::len).collect();
+        let reparto = repartir(&cuentas, paso, paso_sub);
+
+        let mut plan: Vec<(&argos_core::store::SessionRow, f32, f32, f32, bool)> = Vec::new();
+        for (k, raiz) in raices.iter().enumerate() {
+            plan.push((raiz, reparto.raices[k], 0.0, radio_insignia, false));
+            for (j, hijo) in hijos[k].iter().enumerate() {
+                let dy = radio_insignia * 2.0 + radio_sub * 2.2;
+                plan.push((hijo, reparto.subagentes[k][j], dy, radio_sub, true));
+            }
+        }
+
+        for (i, (agente, dx, dy, radio_base, es_subagente)) in plan.iter().copied().enumerate() {
             let (simbolo_estado, color_estado) = state_badge(agente.state);
             let trabajando = agente.state == argos_core::model::AgentState::Working;
 
@@ -364,21 +448,32 @@ pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> O
                 0.0
             };
 
-            let centro_insignia = egui::pos2(
-                c.x - ancho_total / 2.0 + i as f32 * paso,
-                c.y + r + radio_insignia + 30.0 * zoom + vaiven,
-            );
+            let base_y = c.y + r + radio_insignia + 30.0 * zoom;
+            let centro_insignia = egui::pos2(c.x + dx, base_y + dy + vaiven);
+
+            // De dónde sale el hilo: del commit si es raíz, del padre si no.
+            let ancla = if es_subagente {
+                egui::pos2(
+                    c.x + reparto.raices[raices
+                        .iter()
+                        .position(|raiz| Some(raiz.id.as_str()) == agente.parent_id.as_deref())
+                        .unwrap_or(0)],
+                    base_y + radio_insignia,
+                )
+            } else {
+                egui::pos2(c.x, c.y + r)
+            };
 
             // Late solo si trabaja: al esperarte, quieto. El movimiento
             // significa actividad y no debe mentir.
             let radio_latido = if trabajando {
-                radio_insignia * (1.0 + (t * 2.6).sin() * 0.07)
+                radio_base * (1.0 + (t * 2.6).sin() * 0.07)
             } else {
-                radio_insignia
+                radio_base
             };
 
             // El castor es pulsable: lleva a la terminal de ese agente.
-            let radio_toque = radio_insignia * 2.2;
+            let radio_toque = radio_base * 2.2;
             let sobre_el_castor =
                 cursor.is_some_and(|q| (q - centro_insignia).length() < radio_toque);
 
@@ -391,10 +486,10 @@ pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> O
                 }
             }
 
-            // Hilo vertical hasta el nodo: deja claro de quién cuelga.
+            // Hilo hasta su ancla: deja claro de quién cuelga.
             pintor.line_segment(
                 [
-                    egui::pos2(c.x, c.y + r),
+                    ancla,
                     egui::pos2(centro_insignia.x, centro_insignia.y - radio_latido),
                 ],
                 egui::Stroke::new(1.0 * zoom, color_estado.gamma_multiply(0.45)),
@@ -403,7 +498,9 @@ pub fn pintar_git(ui: &mut egui::Ui, grafo: &GrafoGit, p: &mut Pintura<'_>) -> O
             // Con la mascota instalada, ella lleva el estado: tiene una
             // animación propia por cada uno. El logo de plataforma queda
             // debajo, pequeño, para saber quién es sin repetir información.
-            if let Some((tex, columnas, filas_atlas)) = mascota.textura(ui.ctx()) {
+            if let Some((tex, columnas, filas_atlas)) =
+                (!es_subagente).then(|| mascota.textura(ui.ctx())).flatten()
+            {
                 let tira = crate::mascota::tira_de(agente.state);
                 let fotograma = crate::mascota::fotograma_en(tira, t);
                 let uv = crate::mascota::uv_de(tira, fotograma, columnas, filas_atlas);
@@ -623,6 +720,53 @@ mod tests {
         let r = nombres_de_rama(&["main".into(), "origin/main".into()]);
 
         assert_eq!(r, vec!["main".to_string()]);
+    }
+
+    /// Un agente solo: justo debajo de su commit, sin desplazarse.
+    #[test]
+    fn un_agente_sin_subagentes_va_centrado_bajo_su_commit() {
+        let r = repartir(&[0], 40.0, 24.0);
+
+        assert_eq!(r.raices, vec![0.0]);
+        assert!(r.subagentes[0].is_empty());
+    }
+
+    /// Dos raíces se reparten a los lados del commit, no encima.
+    #[test]
+    fn dos_raices_se_separan_alrededor_del_centro() {
+        let r = repartir(&[0, 0], 40.0, 24.0);
+
+        assert_eq!(r.raices, vec![-20.0, 20.0]);
+    }
+
+    /// Los subagentes cuelgan centrados bajo su padre: el del medio cae a
+    /// plomo y los otros se abren a los lados.
+    #[test]
+    fn los_subagentes_se_centran_bajo_su_padre() {
+        let r = repartir(&[3], 40.0, 24.0);
+
+        assert_eq!(r.raices, vec![0.0]);
+        assert_eq!(r.subagentes[0], vec![-24.0, 0.0, 24.0]);
+    }
+
+    /// Una raíz con muchos hijos necesita más sitio que una sin ninguno, o
+    /// los subagentes de una se meten debajo de la otra.
+    #[test]
+    fn una_raiz_con_hijos_reserva_el_ancho_que_ocupan() {
+        let r = repartir(&[4, 0], 40.0, 24.0);
+
+        // La primera ocupa 4*24 = 96; la segunda, el paso mínimo de 40.
+        // Total 136, centrado: la primera va en [-68, 28] y la segunda en
+        // [28, 68], así que sus centros son -20 y 48.
+        assert_eq!(r.raices, vec![-20.0, 48.0]);
+
+        // Y sus hijos caben dentro de su hueco, sin invadir al vecino.
+        let hijos = &r.subagentes[0];
+        assert_eq!(hijos.len(), 4);
+        assert!(
+            hijos.iter().all(|x| *x < 28.0),
+            "ningún hijo debe pasarse al hueco de la otra raíz: {hijos:?}"
+        );
     }
 
     fn carril_de(g: &GrafoGit, sha: &str) -> usize {
